@@ -1,0 +1,466 @@
+from aiogram import Router
+from aiogram.filters import CommandStart
+from aiogram.types import Message, CallbackQuery
+from aiogram.fsm.context import FSMContext
+
+from states import GoalFlow
+from keyboards import execution_keyboard, confirm_plan_keyboard, coach_style_keyboard
+from api_client import (
+    get_or_create_user,
+    create_goal,
+    start_profiling,
+    submit_profiling_answer,
+    generate_plan,
+    get_current_plan,
+    accept_plan,
+    create_today_checkin,
+    get_today_checkin,
+    submit_checkin_report,
+    set_step_status,
+    complete_checkin,
+    create_step_proof,
+)
+
+router = Router()
+
+async def send_current_step(message_obj, state: FSMContext):
+    data = await state.get_data()
+
+    steps = data.get("steps", [])
+    current_task_index = data.get("current_task_index", 0)
+
+    if not steps:
+        await message_obj.answer("В плане пока нет шагов.")
+        return
+
+    if current_task_index >= len(steps):
+        done_count = data.get("done_count", 0)
+        failed_count = data.get("failed_count", 0)
+
+        await message_obj.answer(
+            f"🎉 План завершен\n\n"
+            f"Ты прошел весь цикл — это уже результат.\n\n"
+            f"📊 Итог:\n"
+            f"• Выполнено: {done_count}\n"
+            f"• Не выполнено: {failed_count}\n\n"
+            f"Готов идти дальше? Напиши новую цель 🚀"
+        )
+        return
+
+    step = steps[current_task_index]
+
+    current_step_id = step.get("id") or step.get("step_id")
+    title = step.get("title", "Без названия")
+    description = step.get("description")
+
+    await state.update_data(current_step_id=current_step_id)
+
+    total_steps = len(steps)
+    current_index = current_task_index
+    progress_percent = int((current_index / total_steps) * 100)
+
+    text = (
+        f"📍 Шаг {current_index + 1} из {total_steps}\n"
+        f"📊 Прогресс: {progress_percent}%\n\n"
+        f"{title}\n\n"
+    )
+
+    if description:
+        text += description
+
+    await message_obj.answer(
+        text,
+        reply_markup=execution_keyboard()
+    )
+
+    await state.set_state(GoalFlow.executing_plan)
+
+@router.message(CommandStart())
+async def start_handler(message: Message, state: FSMContext):
+    telegram_user = message.from_user
+
+    user = await get_or_create_user(
+        {
+            "telegram_user_id": telegram_user.id,
+            "telegram_chat_id": message.chat.id,
+            "username": telegram_user.username,
+            "first_name": telegram_user.first_name,
+            "last_name": telegram_user.last_name,
+            "language_code": telegram_user.language_code,
+        }
+    )
+
+    db_user_id = user["user_id"]
+
+    await state.update_data(db_user_id=db_user_id)
+
+    await state.set_state(GoalFlow.waiting_goal)
+    await message.answer(
+        "Привет. Напиши свою цель одним сообщением.\n\n"
+        "Например:\n"
+        "- Хочу 6 кубиков пресса\n"
+        "- Хочу заработать 1 000 000 рублей\n"
+        "- Хочу научиться играть на гитаре"
+    )
+
+
+@router.message(GoalFlow.waiting_goal)
+async def get_goal(message: Message, state: FSMContext):
+    data = await state.get_data()
+    db_user_id = data.get("db_user_id")
+
+    goal = await create_goal(
+        {
+            "user_id": db_user_id,
+            "title": message.text,
+            "description": message.text,
+            "category": "general",
+            "target_date": None,
+            "priority": 1,
+        }
+    )
+
+    goal_id = goal["goal_id"]
+
+    profiling = await start_profiling(goal_id)
+    first_question = profiling["current_question_text"]
+
+    await state.update_data(
+        raw_goal=message.text,
+        goal_id=goal_id,
+    )
+
+    await state.set_state(GoalFlow.clarifying_goal)
+    await message.answer(f"Отлично. Первый вопрос: {first_question}")
+
+
+@router.message(GoalFlow.clarifying_goal)
+async def clarify_goal(message: Message, state: FSMContext):
+    data = await state.get_data()
+    goal_id = data.get("goal_id")
+
+    result = await submit_profiling_answer(goal_id, message.text)
+
+    if result["is_completed"]:
+        await message.answer(
+            "Профилирование завершено ✅\n\n"
+            "Генерирую план... ⏳"
+        )
+
+        await generate_plan(goal_id)
+        plan = await get_current_plan(goal_id)
+
+        summary = plan.get("summary") or plan.get("summary_text") or "План готов"
+        roadmap = plan.get("roadmap") or plan.get("content", {}).get("roadmap", [])
+        steps = plan.get("steps") or plan.get("content", {}).get("steps", [])
+
+        roadmap_text = ""
+        if roadmap:
+            roadmap_items = "\n".join([f"• {item}" for item in roadmap])
+            roadmap_text = f"\n\n📋 Общий путь:\n{roadmap_items}"
+
+        steps_preview = ""
+        if steps:
+            preview_lines = []
+            for i, step in enumerate(steps, start=1):
+                title = step.get("title", "Без названия")
+                description = step.get("description", "")
+                line = f"{i}. {title}"
+                if description:
+                    line += f"\n   {description}"
+                preview_lines.append(line)
+            steps_preview = "\n\n🧩 Ближайшие шаги:\n" + "\n".join(preview_lines)
+
+        await message.answer(
+            f"📌 Коротко:\n{summary}"
+            f"{roadmap_text}"
+            f"{steps_preview}\n\n"
+            f"Принять план?",
+            reply_markup=confirm_plan_keyboard()
+        )
+
+        await state.set_state(GoalFlow.confirming_plan)
+        return
+
+    current_question_key = result.get("current_question_key")
+    current_question_text = result.get("current_question_text", "Следующий вопрос")
+
+    if current_question_key == "coach_style":
+        await message.answer(
+            current_question_text,
+            reply_markup=coach_style_keyboard()
+        )
+        await state.set_state(GoalFlow.choosing_coach_style)
+        return
+
+    await message.answer(current_question_text)
+
+@router.callback_query(GoalFlow.choosing_coach_style)
+async def choose_coach_style_callback(callback: CallbackQuery, state: FSMContext):
+    data = callback.data
+
+    if data == "coach_aggressive":
+        coach_style = "aggressive"
+        coach_style_label = "Жесткий"
+    elif data == "coach_balanced":
+        coach_style = "balanced"
+        coach_style_label = "Баланс"
+    elif data == "coach_soft":
+        coach_style = "soft"
+        coach_style_label = "Мягкий"
+    else:
+        await callback.answer("Ошибка выбора")
+        return
+
+    user_data = await state.get_data()
+    goal_id = user_data.get("goal_id")
+
+    result = await submit_profiling_answer(goal_id, coach_style)
+
+    await callback.message.answer(
+        f"Стиль коуча выбран: {coach_style_label} ✅"
+    )
+
+    if result["is_completed"]:
+        await callback.message.answer(
+            "Профилирование завершено ✅\n\n"
+            "Генерирую план... ⏳"
+        )
+
+        await generate_plan(goal_id)
+        plan = await get_current_plan(goal_id)
+
+        summary = plan.get("summary") or plan.get("summary_text") or "План готов"
+        roadmap = plan.get("roadmap") or plan.get("content", {}).get("roadmap", [])
+        steps = plan.get("steps") or plan.get("content", {}).get("steps", [])
+
+        roadmap_text = ""
+        if roadmap:
+            roadmap_items = "\n".join([f"• {item}" for item in roadmap])
+            roadmap_text = f"\n\n📋 Общий путь:\n{roadmap_items}"
+
+        steps_preview = ""
+        if steps:
+            preview_lines = []
+            for i, step in enumerate(steps, start=1):
+                title = step.get("title", "Без названия")
+                description = step.get("description", "")
+                line = f"{i}. {title}"
+                if description:
+                    line += f"\n   {description}"
+                preview_lines.append(line)
+            steps_preview = "\n\n🧩 Ближайшие шаги:\n" + "\n".join(preview_lines)
+
+        await callback.message.answer(
+            f"📌 Коротко:\n{summary}"
+            f"{roadmap_text}"
+            f"{steps_preview}\n\n"
+            f"Принять план?",
+            reply_markup=confirm_plan_keyboard()
+        )
+
+        await state.set_state(GoalFlow.confirming_plan)
+        await callback.answer()
+        return
+
+    current_question_text = result.get("current_question_text", "Следующий вопрос")
+    await callback.message.answer(current_question_text)
+    await state.set_state(GoalFlow.clarifying_goal)
+    await callback.answer()
+
+
+@router.message(GoalFlow.collecting_profile)
+async def collect_profile(message: Message, state: FSMContext):
+    await message.answer(
+        "Этот этап теперь обрабатывается через backend profiling."
+    )
+
+
+
+@router.callback_query(GoalFlow.executing_plan)
+async def execution_callback(callback: CallbackQuery, state: FSMContext):
+    data = callback.data
+
+    if data == "step_done":
+        await callback.message.answer(
+            "Отлично. Напиши короткий комментарий, что именно ты сделал, или отправь proof."
+        )
+        await state.set_state(GoalFlow.waiting_done_comment)
+        await callback.answer()
+        return
+
+    if data == "step_failed":
+        await callback.message.answer(
+            "Окей. Напиши, почему не получилось выполнить задачу."
+        )
+        await state.set_state(GoalFlow.waiting_fail_comment)
+        await callback.answer()
+        return
+
+    await callback.answer("Неизвестное действие")
+
+
+@router.message(GoalFlow.waiting_done_comment)
+async def done_comment_handler(message: Message, state: FSMContext):
+    data = await state.get_data()
+    done_count = data.get("done_count", 0)
+    await state.update_data(done_count=done_count + 1)
+
+    current_task_index = data.get("current_task_index", 0)
+    goal_id = data.get("goal_id")
+    current_step_id = data.get("current_step_id")
+
+    checkin = await create_today_checkin(goal_id)
+    checkin_id = checkin.get("id") or checkin.get("checkin_id")
+
+    if message.photo:
+        photo = message.photo[-1]
+
+        payload = {
+            "goal_id": goal_id,
+            "proof_type": "photo",
+            "telegram_file_id": photo.file_id,
+            "file_unique_id": photo.file_unique_id,
+            "mime_type": "image/jpeg",
+            "filename": "photo.jpg",
+            "caption": message.caption or ""
+        }
+
+        report_text = message.caption or "Фото отправлено как proof"
+
+    elif message.document:
+        doc = message.document
+
+        payload = {
+            "goal_id": goal_id,
+            "proof_type": "file",
+            "telegram_file_id": doc.file_id,
+            "file_unique_id": doc.file_unique_id,
+            "mime_type": doc.mime_type,
+            "filename": doc.file_name,
+            "caption": message.caption or ""
+        }
+
+        report_text = message.caption or "Файл отправлен как proof"
+
+    else:
+        payload = {
+            "goal_id": goal_id,
+            "proof_type": "text",
+            "text": message.text
+        }
+
+        report_text = message.text or ""
+
+    await create_step_proof(
+        checkin_id=checkin_id,
+        step_id=current_step_id,
+        payload=payload
+    )
+
+    await submit_checkin_report(checkin_id, report_text)
+
+    await set_step_status(
+        checkin_id=checkin_id,
+        step_id=current_step_id,
+        status="done"
+    )
+
+    await complete_checkin(checkin_id)
+
+    if message.photo:
+     response_text = "📸 Фото-доказательство сохранено"
+    
+    elif message.document:
+     response_text = "📎 Файл сохранен"
+    
+    else:
+     response_text = "📝 Комментарий сохранен"
+
+    await message.answer(
+    f"{response_text}\n\n"
+    f"🔥 Отлично, засчитано\n"
+    f"Двигаемся дальше 👇"
+)
+
+    await state.update_data(current_task_index=current_task_index + 1)
+    await send_current_step(message, state)
+
+
+@router.message(GoalFlow.waiting_fail_comment)
+async def fail_comment_handler(message: Message, state: FSMContext):
+    data = await state.get_data()
+    failed_count = data.get("failed_count", 0)
+    await state.update_data(failed_count=failed_count + 1)
+
+    current_task_index = data.get("current_task_index", 0)
+    goal_id = data.get("goal_id")
+    current_step_id = data.get("current_step_id")
+
+    comment = message.text
+
+    checkin = await create_today_checkin(goal_id)
+    checkin_id = checkin.get("id") or checkin.get("checkin_id")
+
+    await submit_checkin_report(checkin_id, comment)
+
+    await set_step_status(
+        checkin_id=checkin_id,
+        step_id=current_step_id,
+        status="failed"
+    )
+
+    await complete_checkin(checkin_id)
+
+    await message.answer(
+    "Ок, зафиксировали ❌\n\n"
+    "Главное — не выпадать из процесса.\n"
+    "Идем дальше 👇"
+)
+
+    await state.update_data(current_task_index=current_task_index + 1)
+    await send_current_step(message, state)
+
+@router.callback_query(GoalFlow.confirming_plan)
+async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
+    data = callback.data
+
+    if data == "accept_plan":
+        user_data = await state.get_data()
+        goal_id = user_data.get("goal_id")
+
+        await accept_plan(goal_id)
+
+        plan = await get_current_plan(goal_id)
+        steps = plan.get("content", {}).get("steps", [])
+        await state.update_data(
+        plan=plan,
+        steps=steps,
+        current_task_index=0,
+        done_count=0,
+        failed_count=0
+)
+
+        await callback.message.answer(
+            "План принят ✅\n\nТеперь начинаем выполнение."
+        )
+
+        await state.set_state(GoalFlow.executing_plan)
+        await send_current_step(callback.message, state)
+
+    elif data == "reject_plan":
+        await callback.message.answer("Ок, переделаю план...")
+        user_data = await state.get_data()
+        goal_id = user_data.get("goal_id")
+        await generate_plan(goal_id)
+        plan = await get_current_plan(goal_id)
+        plan_text = plan.get("summary_text") or plan.get("summary") or "План готов"
+
+        await callback.message.answer(
+            f"Вот новый план:\n\n{plan_text}\n\nПринять его?",
+            reply_markup=confirm_plan_keyboard()
+        )
+
+        await state.set_state(GoalFlow.confirming_plan)
+
+    await callback.answer()
