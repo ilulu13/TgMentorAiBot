@@ -92,7 +92,9 @@ async def get_profiling_state(goal_id: str):
         return await _handle_response(response)
     
 async def generate_plan(goal_id: str):
-    async with httpx.AsyncClient() as client:
+    timeout = httpx.Timeout(60.0)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
             f"{BASE_URL}/goals/{goal_id}/plan/generate",
             json={"regenerate": False}
