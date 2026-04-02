@@ -23,6 +23,100 @@ from api_client import (
 
 router = Router()
 
+def render_profiling_question_text(result: dict) -> str:
+    current_question_text = result.get("current_question_text", "Следующий вопрос")
+    example_answer = result.get("example_answer")
+    feedback_message = result.get("feedback_message")
+    follow_up_question = result.get("follow_up_question")
+    needs_follow_up = result.get("needs_follow_up", False)
+
+    answered = result.get("questions_answered_count")
+    total = result.get("questions_total_count")
+
+    progress_text = ""
+    if isinstance(answered, int) and isinstance(total, int) and total > 0:
+        progress_text = f"Вопрос {answered + 1}/{total}\n\n"
+
+    if needs_follow_up:
+        text = "Нужно чуть точнее 👇\n\n"
+
+        if feedback_message:
+            text += f"{feedback_message}\n\n"
+
+        text += follow_up_question or current_question_text
+
+        if example_answer:
+            text += f"\n\nПример: {example_answer}"
+
+        return text
+
+    text = progress_text + current_question_text
+
+    if feedback_message:
+        text += f"\n\n{feedback_message}"
+
+    if example_answer:
+        text += f"\n\nПример: {example_answer}"
+
+    return text
+
+
+async def send_profiling_response(message_obj, result: dict, state: FSMContext):
+    current_question_key = result.get("current_question_key")
+    text = render_profiling_question_text(result)
+
+    if current_question_key == "coach_style":
+        await message_obj.answer(
+            text,
+            reply_markup=coach_style_keyboard()
+        )
+        await state.set_state(GoalFlow.choosing_coach_style)
+        return
+
+    await message_obj.answer(text)
+    await state.set_state(GoalFlow.clarifying_goal)
+
+
+async def send_plan_preview(message_obj, goal_id: str, state: FSMContext):
+    await message_obj.answer(
+        "Профилирование завершено ✅\n\n"
+        "Генерирую план... ⏳"
+    )
+
+    await generate_plan(goal_id)
+    plan = await get_current_plan(goal_id)
+
+    summary = plan.get("summary") or plan.get("summary_text") or "План готов"
+    roadmap = plan.get("roadmap") or plan.get("content", {}).get("roadmap", [])
+    steps = plan.get("steps") or plan.get("content", {}).get("steps", [])
+
+    roadmap_text = ""
+    if roadmap:
+        roadmap_items = "\n".join([f"• {item}" for item in roadmap])
+        roadmap_text = f"\n\n📋 Общий путь:\n{roadmap_items}"
+
+    steps_preview = ""
+    if steps:
+        preview_lines = []
+        for i, step in enumerate(steps, start=1):
+            title = step.get("title", "Без названия")
+            description = step.get("description", "")
+            line = f"{i}. {title}"
+            if description:
+                line += f"\n   {description}"
+            preview_lines.append(line)
+        steps_preview = "\n\n🧩 Ближайшие шаги:\n" + "\n".join(preview_lines)
+
+    await message_obj.answer(
+        f"📌 Коротко:\n{summary}"
+        f"{roadmap_text}"
+        f"{steps_preview}\n\n"
+        f"Принять план?",
+        reply_markup=confirm_plan_keyboard()
+    )
+
+    await state.set_state(GoalFlow.confirming_plan)
+
 async def send_current_step(message_obj, state: FSMContext):
     data = await state.get_data()
 
@@ -123,15 +217,13 @@ async def get_goal(message: Message, state: FSMContext):
     goal_id = goal["goal_id"]
 
     profiling = await start_profiling(goal_id)
-    first_question = profiling["current_question_text"]
 
     await state.update_data(
         raw_goal=message.text,
         goal_id=goal_id,
     )
 
-    await state.set_state(GoalFlow.clarifying_goal)
-    await message.answer(f"Отлично. Первый вопрос: {first_question}")
+    await send_profiling_response(message, profiling, state)
 
 
 @router.message(GoalFlow.clarifying_goal)
@@ -141,59 +233,11 @@ async def clarify_goal(message: Message, state: FSMContext):
 
     result = await submit_profiling_answer(goal_id, message.text)
 
-    if result["is_completed"]:
-        await message.answer(
-            "Профилирование завершено ✅\n\n"
-            "Генерирую план... ⏳"
-        )
-
-        await generate_plan(goal_id)
-        plan = await get_current_plan(goal_id)
-
-        summary = plan.get("summary") or plan.get("summary_text") or "План готов"
-        roadmap = plan.get("roadmap") or plan.get("content", {}).get("roadmap", [])
-        steps = plan.get("steps") or plan.get("content", {}).get("steps", [])
-
-        roadmap_text = ""
-        if roadmap:
-            roadmap_items = "\n".join([f"• {item}" for item in roadmap])
-            roadmap_text = f"\n\n📋 Общий путь:\n{roadmap_items}"
-
-        steps_preview = ""
-        if steps:
-            preview_lines = []
-            for i, step in enumerate(steps, start=1):
-                title = step.get("title", "Без названия")
-                description = step.get("description", "")
-                line = f"{i}. {title}"
-                if description:
-                    line += f"\n   {description}"
-                preview_lines.append(line)
-            steps_preview = "\n\n🧩 Ближайшие шаги:\n" + "\n".join(preview_lines)
-
-        await message.answer(
-            f"📌 Коротко:\n{summary}"
-            f"{roadmap_text}"
-            f"{steps_preview}\n\n"
-            f"Принять план?",
-            reply_markup=confirm_plan_keyboard()
-        )
-
-        await state.set_state(GoalFlow.confirming_plan)
+    if result.get("is_completed"):
+        await send_plan_preview(message, goal_id, state)
         return
 
-    current_question_key = result.get("current_question_key")
-    current_question_text = result.get("current_question_text", "Следующий вопрос")
-
-    if current_question_key == "coach_style":
-        await message.answer(
-            current_question_text,
-            reply_markup=coach_style_keyboard()
-        )
-        await state.set_state(GoalFlow.choosing_coach_style)
-        return
-
-    await message.answer(current_question_text)
+    await send_profiling_response(message, result, state)
 
 @router.callback_query(GoalFlow.choosing_coach_style)
 async def choose_coach_style_callback(callback: CallbackQuery, state: FSMContext):
@@ -221,51 +265,12 @@ async def choose_coach_style_callback(callback: CallbackQuery, state: FSMContext
         f"Стиль коуча выбран: {coach_style_label} ✅"
     )
 
-    if result["is_completed"]:
-        await callback.message.answer(
-            "Профилирование завершено ✅\n\n"
-            "Генерирую план... ⏳"
-        )
-
-        await generate_plan(goal_id)
-        plan = await get_current_plan(goal_id)
-
-        summary = plan.get("summary") or plan.get("summary_text") or "План готов"
-        roadmap = plan.get("roadmap") or plan.get("content", {}).get("roadmap", [])
-        steps = plan.get("steps") or plan.get("content", {}).get("steps", [])
-
-        roadmap_text = ""
-        if roadmap:
-            roadmap_items = "\n".join([f"• {item}" for item in roadmap])
-            roadmap_text = f"\n\n📋 Общий путь:\n{roadmap_items}"
-
-        steps_preview = ""
-        if steps:
-            preview_lines = []
-            for i, step in enumerate(steps, start=1):
-                title = step.get("title", "Без названия")
-                description = step.get("description", "")
-                line = f"{i}. {title}"
-                if description:
-                    line += f"\n   {description}"
-                preview_lines.append(line)
-            steps_preview = "\n\n🧩 Ближайшие шаги:\n" + "\n".join(preview_lines)
-
-        await callback.message.answer(
-            f"📌 Коротко:\n{summary}"
-            f"{roadmap_text}"
-            f"{steps_preview}\n\n"
-            f"Принять план?",
-            reply_markup=confirm_plan_keyboard()
-        )
-
-        await state.set_state(GoalFlow.confirming_plan)
+    if result.get("is_completed"):
+        await send_plan_preview(callback.message, goal_id, state)
         await callback.answer()
         return
 
-    current_question_text = result.get("current_question_text", "Следующий вопрос")
-    await callback.message.answer(current_question_text)
-    await state.set_state(GoalFlow.clarifying_goal)
+    await send_profiling_response(callback.message, result, state)
     await callback.answer()
 
 
