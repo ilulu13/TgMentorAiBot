@@ -33,12 +33,14 @@ def render_profiling_question_text(result: dict) -> str:
     answered = result.get("questions_answered_count")
     total = result.get("questions_total_count")
 
+    # ===== ПРОГРЕСС =====
     progress_text = ""
     if isinstance(answered, int) and isinstance(total, int) and total > 0:
-        progress_text = f"Вопрос {answered + 1}/{total}\n\n"
+        progress_text = f"📊 Вопрос {answered + 1}/{total}\n\n"
 
+    # ===== FOLLOW-UP (если ответ слабый) =====
     if needs_follow_up:
-        text = "Нужно чуть точнее 👇\n\n"
+        text = "⚠️ Нужно чуть точнее\n\n"
 
         if feedback_message:
             text += f"{feedback_message}\n\n"
@@ -46,24 +48,56 @@ def render_profiling_question_text(result: dict) -> str:
         text += follow_up_question or current_question_text
 
         if example_answer:
-            text += f"\n\nПример: {example_answer}"
+            text += f"\n\n💡 Пример:\n{example_answer}"
 
         return text
 
-    text = progress_text + current_question_text
+    # ===== ОБЫЧНЫЙ ВОПРОС =====
+    text = progress_text
+
+    text += f"{current_question_text}\n"
 
     if feedback_message:
-        text += f"\n\n{feedback_message}"
+        text += f"\n{feedback_message}\n"
+
+    # подсказка (если есть)
+    text += "\n💡 Подсказка:\nОтветь конкретно, с цифрами или фактами\n"
 
     if example_answer:
-        text += f"\n\nПример: {example_answer}"
+        text += f"\n📌 Пример:\n{example_answer}"
 
     return text
+
+
+import random
+
+
+def get_positive_feedback():
+    phrases = [
+        "🔥 Понял, двигаемся дальше",
+        "👌 Отлично, фиксирую",
+        "💪 Хорошо, идем дальше",
+        "🚀 Принял, продолжаем",
+        "👍 Ок, двигаемся"
+    ]
+    return random.choice(phrases)
 
 
 async def send_profiling_response(message_obj, result: dict, state: FSMContext):
     current_question_key = result.get("current_question_key")
     text = render_profiling_question_text(result)
+
+    needs_follow_up = result.get("needs_follow_up", False)
+    answer_accepted = result.get("answer_accepted", True)
+
+    if needs_follow_up:
+        await message_obj.answer(text)
+        await state.set_state(GoalFlow.clarifying_goal)
+        return
+
+    if answer_accepted:
+        feedback = get_positive_feedback()
+        await message_obj.answer(feedback)
 
     if current_question_key == "coach_style":
         await message_obj.answer(
@@ -77,11 +111,23 @@ async def send_profiling_response(message_obj, result: dict, state: FSMContext):
     await state.set_state(GoalFlow.clarifying_goal)
 
 
-async def send_plan_preview(message_obj, goal_id: str, state: FSMContext):
-    await message_obj.answer(
-        "Профилирование завершено ✅\n\n"
-        "Генерирую план... ⏳"
-    )
+async def send_plan_preview(message_obj, goal_id: str, state: FSMContext, profiling_result: dict | None = None):
+    profiling_summary = None
+    if profiling_result:
+        profiling_summary = profiling_result.get("profiling_summary")
+
+    summary_text = render_profiling_summary(profiling_summary)
+
+    if summary_text:
+        await message_obj.answer(
+            f"Профилирование завершено ✅\n\n{summary_text}"
+        )
+        await message_obj.answer("Генерирую план... ⏳")
+    else:
+        await message_obj.answer(
+            "Профилирование завершено ✅\n\n"
+            "Генерирую план... ⏳"
+        )
 
     await generate_plan(goal_id)
     plan = await get_current_plan(goal_id)
@@ -169,6 +215,45 @@ async def send_current_step(message_obj, state: FSMContext):
 
     await state.set_state(GoalFlow.executing_plan)
 
+def render_profiling_summary(summary: dict | None) -> str:
+    if not summary or not isinstance(summary, dict):
+        return ""
+
+    field_map = [
+        ("goal_clarity", "🎯 Цель"),
+        ("current_state", "📍 Текущая точка"),
+        ("deadline", "⏳ Срок"),
+        ("resources", "🛠 Ресурсы"),
+        ("constraints", "🚧 Ограничения"),
+        ("motivation", "🔥 Мотивация"),
+    ]
+
+    lines = []
+
+    for key, label in field_map:
+        value = summary.get(key)
+
+        if not value:
+            continue
+
+        if isinstance(value, list):
+            value = ", ".join(str(item) for item in value if item)
+
+        if isinstance(value, dict):
+            parts = []
+            for sub_key, sub_value in value.items():
+                if sub_value:
+                    parts.append(f"{sub_key}: {sub_value}")
+            value = ", ".join(parts)
+
+        if value:
+            lines.append(f"{label}: {value}")
+
+    if not lines:
+        return ""
+
+    return "Вот что я зафиксировал по твоей цели:\n\n" + "\n".join(lines)
+
 @router.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     telegram_user = message.from_user
@@ -196,6 +281,7 @@ async def start_handler(message: Message, state: FSMContext):
         "- Хочу заработать 1 000 000 рублей\n"
         "- Хочу научиться играть на гитаре"
     )
+
 
 
 @router.message(GoalFlow.waiting_goal)
@@ -234,7 +320,7 @@ async def clarify_goal(message: Message, state: FSMContext):
     result = await submit_profiling_answer(goal_id, message.text)
 
     if result.get("is_completed"):
-        await send_plan_preview(message, goal_id, state)
+        await send_plan_preview(message, goal_id, state, profiling_result=result)
         return
 
     await send_profiling_response(message, result, state)
@@ -266,7 +352,7 @@ async def choose_coach_style_callback(callback: CallbackQuery, state: FSMContext
     )
 
     if result.get("is_completed"):
-        await send_plan_preview(callback.message, goal_id, state)
+        await send_plan_preview(callback.message, goal_id, state, profiling_result=result)
         await callback.answer()
         return
 

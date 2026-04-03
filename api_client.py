@@ -1,5 +1,5 @@
 import httpx
-BASE_URL = "https://tgbot-production-c88d.up.railway.app"
+
 from config import BACKEND_BASE_URL
 
 
@@ -91,112 +91,107 @@ async def get_profiling_state(goal_id: str):
         )
         return await _handle_response(response)
     
+    
 async def generate_plan(goal_id: str):
     timeout = httpx.Timeout(60.0)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
-            f"{BASE_URL}/goals/{goal_id}/plan/generate",
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/plan/generate",
             json={"regenerate": False}
         )
-        response.raise_for_status()
-        return response.json()
+        return await _handle_response(response)
 
 
 async def get_current_plan(goal_id: str):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{BASE_URL}/goals/{goal_id}/plan/current")
-        response.raise_for_status()
-        return response.json()
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/plan/current"
+        )
+        return await _handle_response(response)
 
 
 async def accept_plan(goal_id: str):
-    async with httpx.AsyncClient() as client:
-        response = await client.post(f"{BASE_URL}/goals/{goal_id}/plan/accept")
-        response.raise_for_status()
-        return response.json()
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/plan/accept"
+        )
+        return await _handle_response(response)
     
     
 async def start_checkin(goal_id: str):
-    async with httpx.AsyncClient() as client:
-        response = await client.post(f"{BASE_URL}/goals/{goal_id}/checkins/today")
-        response.raise_for_status()
-        return response.json()
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/checkins/today"
+        )
+        return await _handle_response(response)
 
 
 async def send_checkin_text(goal_id: str, text: str):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
-            f"{BASE_URL}/goals/{goal_id}/checkins/today/text",
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/checkins/today/text",
             json={"text": text}
         )
-        response.raise_for_status()
-        return response.json()
+        return await _handle_response(response)
 
 
 async def mark_step(goal_id: str, step_id: str, status: str):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
-            f"{BASE_URL}/goals/{goal_id}/checkins/today/step",
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/checkins/today/step",
             json={
                 "step_id": step_id,
                 "status": status
             }
         )
-        response.raise_for_status()
-        return response.json()
+        return await _handle_response(response)
     
 async def create_today_checkin(goal_id: str):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
-            f"{BASE_URL}/goals/{goal_id}/checkins/today"
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/checkins/today"
         )
-        response.raise_for_status()
-        return response.json()
+        return await _handle_response(response)
 
 
 async def get_today_checkin(goal_id: str):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.get(
-            f"{BASE_URL}/goals/{goal_id}/checkins/today"
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/checkins/today"
         )
-        response.raise_for_status()
-        return response.json()
+        return await _handle_response(response)
 
 
 async def submit_checkin_report(checkin_id: str, text: str):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
-            f"{BASE_URL}/checkins/{checkin_id}/report",
+            f"{BACKEND_BASE_URL}/checkins/{checkin_id}/report",
             json={"report_text": text}
         )
-        response.raise_for_status()
-        return response.json()
+        return await _handle_response(response)
 
 
 async def set_step_status(checkin_id: str, step_id: str, status: str):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
-            f"{BASE_URL}/checkins/{checkin_id}/steps/{step_id}/status",
+            f"{BACKEND_BASE_URL}/checkins/{checkin_id}/steps/{step_id}/status",
             json={"status": status}
         )
-        response.raise_for_status()
-        return response.json()
+        return await _handle_response(response)
 
 
 async def complete_checkin(checkin_id: str):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
-            f"{BASE_URL}/checkins/{checkin_id}/complete"
+            f"{BACKEND_BASE_URL}/checkins/{checkin_id}/complete"
         )
-        response.raise_for_status()
-        return response.json()
+        return await _handle_response(response)
     
 async def create_step_proof(checkin_id: str, step_id: str, payload: dict):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
-            f"{BASE_URL}/checkins/{checkin_id}/steps/{step_id}/proofs",
+            f"{BACKEND_BASE_URL}/checkins/{checkin_id}/steps/{step_id}/proofs",
             json=payload
         )
-        response.raise_for_status()
-        return response.json()
+        return await _handle_response(response)
