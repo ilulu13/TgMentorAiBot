@@ -83,19 +83,25 @@ def get_positive_feedback():
     return random.choice(phrases)
 
 
-async def send_profiling_response(message_obj, result: dict, state: FSMContext):
+async def send_profiling_response(
+    message_obj,
+    result: dict,
+    state: FSMContext,
+    *,
+    show_positive_feedback: bool = True,
+):
     current_question_key = result.get("current_question_key")
     text = render_profiling_question_text(result)
 
     needs_follow_up = result.get("needs_follow_up", False)
-    answer_accepted = result.get("answer_accepted", True)
+    answer_accepted = result.get("answer_accepted", False)
 
     if needs_follow_up:
         await message_obj.answer(text)
         await state.set_state(GoalFlow.clarifying_goal)
         return
 
-    if answer_accepted:
+    if show_positive_feedback and answer_accepted:
         feedback = get_positive_feedback()
         await message_obj.answer(feedback)
 
@@ -309,7 +315,12 @@ async def get_goal(message: Message, state: FSMContext):
         goal_id=goal_id,
     )
 
-    await send_profiling_response(message, profiling, state)
+    await send_profiling_response(
+        message,
+        profiling,
+        state,
+        show_positive_feedback=False,
+    )
 
 
 @router.message(GoalFlow.clarifying_goal)
