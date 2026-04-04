@@ -82,6 +82,18 @@ def get_positive_feedback():
     ]
     return random.choice(phrases)
 
+def get_question_type(result: dict) -> str:
+    question_type = result.get("question_type")
+
+    if not question_type:
+        current_question_key = result.get("current_question_key")
+
+        if current_question_key == "coach_style":
+            return "choice"
+
+        return "text"
+
+    return question_type
 
 async def send_profiling_response(
     message_obj,
@@ -90,6 +102,72 @@ async def send_profiling_response(
     *,
     show_positive_feedback: bool = True,
 ):
+    current_question_key = result.get("current_question_key")
+    question_type = get_question_type(result)
+    text = render_profiling_question_text(result)
+
+    needs_follow_up = result.get("needs_follow_up", False)
+    answer_accepted = result.get("answer_accepted", False)
+
+    if needs_follow_up:
+        if question_type == "choice" and current_question_key == "coach_style":
+            await message_obj.answer(
+                text,
+                reply_markup=coach_style_keyboard()
+            )
+            await state.set_state(GoalFlow.choosing_coach_style)
+            return
+
+        await message_obj.answer(text)
+        await state.set_state(GoalFlow.clarifying_goal)
+        return
+
+    if show_positive_feedback and answer_accepted:
+        feedback = get_positive_feedback()
+        await message_obj.answer(feedback)
+
+    if question_type == "choice":
+        if current_question_key == "coach_style":
+            await message_obj.answer(
+                text,
+                reply_markup=coach_style_keyboard()
+            )
+            await state.set_state(GoalFlow.choosing_coach_style)
+            return
+
+        await message_obj.answer(text)
+        await state.set_state(GoalFlow.clarifying_goal)
+        return
+
+    if question_type == "choice_or_text":
+        if current_question_key == "coach_style":
+            await message_obj.answer(
+                text,
+                reply_markup=coach_style_keyboard()
+            )
+            await state.set_state(GoalFlow.choosing_coach_style)
+            return
+
+        await message_obj.answer(text)
+        await state.set_state(GoalFlow.clarifying_goal)
+        return
+
+    if question_type == "special":
+        if current_question_key == "coach_style":
+            await message_obj.answer(
+                text,
+                reply_markup=coach_style_keyboard()
+            )
+            await state.set_state(GoalFlow.choosing_coach_style)
+            return
+
+        await message_obj.answer(text)
+        await state.set_state(GoalFlow.clarifying_goal)
+        return
+
+    await message_obj.answer(text)
+    await state.set_state(GoalFlow.clarifying_goal)
+
     current_question_key = result.get("current_question_key")
     text = render_profiling_question_text(result)
 
@@ -313,6 +391,7 @@ async def get_goal(message: Message, state: FSMContext):
     await state.update_data(
         raw_goal=message.text,
         goal_id=goal_id,
+        profiling_result=profiling,
     )
 
     await send_profiling_response(
@@ -329,6 +408,7 @@ async def clarify_goal(message: Message, state: FSMContext):
     goal_id = data.get("goal_id")
 
     result = await submit_profiling_answer(goal_id, message.text)
+    await state.update_data(profiling_result=result)
 
     if result.get("is_completed"):
         await send_plan_preview(message, goal_id, state, profiling_result=result)
@@ -357,6 +437,7 @@ async def choose_coach_style_callback(callback: CallbackQuery, state: FSMContext
     goal_id = user_data.get("goal_id")
 
     result = await submit_profiling_answer(goal_id, coach_style)
+    await state.update_data(profiling_result=result)
 
     await callback.message.answer(
         f"Стиль коуча выбран: {coach_style_label} ✅"
