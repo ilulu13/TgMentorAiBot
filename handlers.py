@@ -535,10 +535,24 @@ async def choose_coach_style_callback(callback: CallbackQuery, state: FSMContext
 
 @router.callback_query(lambda c: c.data.startswith("profile_option:"))
 async def profile_option_callback(callback: CallbackQuery, state: FSMContext):
-    selected_value = callback.data.replace("profile_option:", "", 1)
+    raw_index = callback.data.replace("profile_option:", "", 1)
+
+    try:
+        selected_index = int(raw_index)
+    except ValueError:
+        await callback.answer("Некорректный вариант")
+        return
 
     user_data = await state.get_data()
     goal_id = user_data.get("goal_id")
+    profiling_result = user_data.get("profiling_result") or {}
+    suggested_options = profiling_result.get("suggested_options") or []
+
+    if selected_index < 0 or selected_index >= len(suggested_options):
+        await callback.answer("Вариант больше не актуален")
+        return
+
+    selected_value = suggested_options[selected_index]
 
     result = await submit_profiling_answer(goal_id, selected_value)
     await state.update_data(profiling_result=result)

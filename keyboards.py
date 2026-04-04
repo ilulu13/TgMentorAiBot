@@ -4,9 +4,14 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 def build_options_keyboard(options: list[str]) -> InlineKeyboardMarkup:
     buttons = []
 
-    for option in options:
+    for index, option in enumerate(options):
         buttons.append(
-            [InlineKeyboardButton(text=option, callback_data=f"profile_option:{option}")]
+            [
+                InlineKeyboardButton(
+                    text=option,
+                    callback_data=f"profile_option:{index}"
+                )
+            ]
         )
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
