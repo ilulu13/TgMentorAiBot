@@ -1,6 +1,17 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
+def build_options_keyboard(options: list[str]) -> InlineKeyboardMarkup:
+    buttons = []
+
+    for option in options:
+        buttons.append(
+            [InlineKeyboardButton(text=option, callback_data=f"profile_option:{option}")]
+        )
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def plan_selection_keyboard():
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -29,8 +40,6 @@ def execution_keyboard():
     )
     return keyboard
 
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
 
 def confirm_plan_keyboard():
     keyboard = InlineKeyboardMarkup(
@@ -44,7 +53,6 @@ def confirm_plan_keyboard():
         ]
     )
     return keyboard
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
 def coach_style_keyboard():
@@ -55,3 +63,17 @@ def coach_style_keyboard():
             [InlineKeyboardButton(text="🤝 Мягкий", callback_data="coach_soft")],
         ]
     )
+
+def daily_execution_keyboard():
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Done", callback_data="daily_task_done"),
+                InlineKeyboardButton(text="⏭ Skip", callback_data="daily_task_skip"),
+            ],
+            [
+                InlineKeyboardButton(text="📎 Proof", callback_data="daily_task_proof"),
+            ],
+        ]
+    )
+    return keyboard

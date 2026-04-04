@@ -3,8 +3,16 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
+import random
+
 from states import GoalFlow
-from keyboards import execution_keyboard, confirm_plan_keyboard, coach_style_keyboard
+from keyboards import (
+    execution_keyboard,
+    confirm_plan_keyboard,
+    coach_style_keyboard,
+    build_options_keyboard,
+    daily_execution_keyboard,
+)
 from api_client import (
     get_or_create_user,
     create_goal,
@@ -19,57 +27,54 @@ from api_client import (
     set_step_status,
     complete_checkin,
     create_step_proof,
+    get_daily_plans,
+    get_today_daily_plan,
+    get_daily_plan_by_day,
+    set_daily_task_status,
+    set_daily_plan_status,
 )
 
 router = Router()
 
 def render_profiling_question_text(result: dict) -> str:
-    current_question_text = result.get("current_question_text", "Следующий вопрос")
-    example_answer = result.get("example_answer")
+    needs_follow_up = result.get("needs_follow_up", False)
     feedback_message = result.get("feedback_message")
     follow_up_question = result.get("follow_up_question")
-    needs_follow_up = result.get("needs_follow_up", False)
+    current_question_text = result.get("current_question_text", "Следующий вопрос")
+    example_answer = result.get("example_answer")
 
     answered = result.get("questions_answered_count")
     total = result.get("questions_total_count")
 
-    # ===== ПРОГРЕСС =====
-    progress_text = ""
-    if isinstance(answered, int) and isinstance(total, int) and total > 0:
-        progress_text = f"📊 Вопрос {answered + 1}/{total}\n\n"
-
-    # ===== FOLLOW-UP (если ответ слабый) =====
     if needs_follow_up:
-        text = "⚠️ Нужно чуть точнее\n\n"
+        parts = ["⚠️ Нужно уточнить"]
 
         if feedback_message:
-            text += f"{feedback_message}\n\n"
+            parts.append(feedback_message)
 
-        text += follow_up_question or current_question_text
+        parts.append(follow_up_question or current_question_text)
 
         if example_answer:
-            text += f"\n\n💡 Пример:\n{example_answer}"
+            parts.append(f"💡 Пример:\n{example_answer}")
 
-        return text
+        return "\n\n".join(parts)
 
-    # ===== ОБЫЧНЫЙ ВОПРОС =====
-    text = progress_text
+    parts = []
 
-    text += f"{current_question_text}\n"
+    if isinstance(answered, int) and isinstance(total, int) and total > 0:
+        parts.append(f"📊 Вопрос {answered + 1}/{total}")
+
+    parts.append(current_question_text)
 
     if feedback_message:
-        text += f"\n{feedback_message}\n"
+        parts.append(feedback_message)
 
-    # подсказка (если есть)
-    text += "\n💡 Подсказка:\nОтветь конкретно, с цифрами или фактами\n"
+    parts.append("💡 Подсказка:\nОтветь конкретно, с цифрами или фактами")
 
     if example_answer:
-        text += f"\n📌 Пример:\n{example_answer}"
+        parts.append(f"📌 Пример:\n{example_answer}")
 
-    return text
-
-
-import random
+    return "\n\n".join(parts)
 
 
 def get_positive_feedback():
@@ -108,6 +113,16 @@ async def send_profiling_response(
 
     needs_follow_up = result.get("needs_follow_up", False)
     answer_accepted = result.get("answer_accepted", False)
+    suggested_options = result.get("suggested_options") or []
+
+    async def answer_with_optional_keyboard():
+        if suggested_options:
+            await message_obj.answer(
+                text,
+                reply_markup=build_options_keyboard(suggested_options)
+            )
+        else:
+            await message_obj.answer(text)
 
     if needs_follow_up:
         if question_type == "choice" and current_question_key == "coach_style":
@@ -118,7 +133,7 @@ async def send_profiling_response(
             await state.set_state(GoalFlow.choosing_coach_style)
             return
 
-        await message_obj.answer(text)
+        await answer_with_optional_keyboard()
         await state.set_state(GoalFlow.clarifying_goal)
         return
 
@@ -135,7 +150,7 @@ async def send_profiling_response(
             await state.set_state(GoalFlow.choosing_coach_style)
             return
 
-        await message_obj.answer(text)
+        await answer_with_optional_keyboard()
         await state.set_state(GoalFlow.clarifying_goal)
         return
 
@@ -148,7 +163,7 @@ async def send_profiling_response(
             await state.set_state(GoalFlow.choosing_coach_style)
             return
 
-        await message_obj.answer(text)
+        await answer_with_optional_keyboard()
         await state.set_state(GoalFlow.clarifying_goal)
         return
 
@@ -161,39 +176,51 @@ async def send_profiling_response(
             await state.set_state(GoalFlow.choosing_coach_style)
             return
 
-        await message_obj.answer(text)
+        await answer_with_optional_keyboard()
         await state.set_state(GoalFlow.clarifying_goal)
         return
 
-    await message_obj.answer(text)
+    await answer_with_optional_keyboard()
     await state.set_state(GoalFlow.clarifying_goal)
 
-    current_question_key = result.get("current_question_key")
-    text = render_profiling_question_text(result)
+def render_profiling_summary(summary: dict | None) -> str:
+    if not summary or not isinstance(summary, dict):
+        return ""
 
-    needs_follow_up = result.get("needs_follow_up", False)
-    answer_accepted = result.get("answer_accepted", False)
+    field_map = [
+        ("goal_clarity", "🎯 Цель"),
+        ("current_state", "📍 Текущая точка"),
+        ("deadline", "⏳ Срок"),
+        ("resources", "🛠 Ресурсы"),
+        ("constraints", "🚧 Ограничения"),
+        ("motivation", "🔥 Мотивация"),
+    ]
 
-    if needs_follow_up:
-        await message_obj.answer(text)
-        await state.set_state(GoalFlow.clarifying_goal)
-        return
+    lines = []
 
-    if show_positive_feedback and answer_accepted:
-        feedback = get_positive_feedback()
-        await message_obj.answer(feedback)
+    for key, label in field_map:
+        value = summary.get(key)
 
-    if current_question_key == "coach_style":
-        await message_obj.answer(
-            text,
-            reply_markup=coach_style_keyboard()
-        )
-        await state.set_state(GoalFlow.choosing_coach_style)
-        return
+        if not value:
+            continue
 
-    await message_obj.answer(text)
-    await state.set_state(GoalFlow.clarifying_goal)
+        if isinstance(value, list):
+            value = ", ".join(str(item) for item in value if item)
 
+        if isinstance(value, dict):
+            parts = []
+            for sub_key, sub_value in value.items():
+                if sub_value:
+                    parts.append(f"{sub_key}: {sub_value}")
+            value = ", ".join(parts)
+
+        if value:
+            lines.append(f"{label}: {value}")
+
+    if not lines:
+        return ""
+
+    return "Вот что я зафиксировал по твоей цели:\n\n" + "\n".join(lines)
 
 async def send_plan_preview(message_obj, goal_id: str, state: FSMContext, profiling_result: dict | None = None):
     profiling_summary = None
@@ -299,44 +326,75 @@ async def send_current_step(message_obj, state: FSMContext):
 
     await state.set_state(GoalFlow.executing_plan)
 
-def render_profiling_summary(summary: dict | None) -> str:
-    if not summary or not isinstance(summary, dict):
-        return ""
+async def send_today_daily_plan(message_obj, state: FSMContext):
+    data = await state.get_data()
+    goal_id = data.get("goal_id")
 
-    field_map = [
-        ("goal_clarity", "🎯 Цель"),
-        ("current_state", "📍 Текущая точка"),
-        ("deadline", "⏳ Срок"),
-        ("resources", "🛠 Ресурсы"),
-        ("constraints", "🚧 Ограничения"),
-        ("motivation", "🔥 Мотивация"),
-    ]
+    today_plan = await get_today_daily_plan(goal_id)
+
+    if not today_plan:
+        await message_obj.answer("На сегодня пока нет плана.")
+        return
+
+    daily_plan_id = today_plan.get("id") or today_plan.get("daily_plan_id")
+    day_number = today_plan.get("day_number")
+    tasks = today_plan.get("tasks") or today_plan.get("daily_tasks") or []
+
+    await state.update_data(
+        current_daily_plan=today_plan,
+        current_daily_plan_id=daily_plan_id,
+        current_daily_tasks=tasks,
+    )
+
+    if not tasks:
+        await message_obj.answer(
+            f"📅 День {day_number}\n\nНа сегодня задач пока нет."
+        )
+        return
 
     lines = []
+    for index, task in enumerate(tasks, start=1):
+        title = task.get("title", "Без названия")
+        description = task.get("description", "")
+        status = task.get("status", "pending")
 
-    for key, label in field_map:
-        value = summary.get(key)
+        status_emoji = "⬜️"
+        if status == "done":
+            status_emoji = "✅"
+        elif status == "skipped":
+            status_emoji = "⏭"
+        elif status == "failed":
+            status_emoji = "❌"
 
-        if not value:
-            continue
+        line = f"{status_emoji} {index}. {title}"
+        if description:
+            line += f"\n   {description}"
 
-        if isinstance(value, list):
-            value = ", ".join(str(item) for item in value if item)
+        lines.append(line)
 
-        if isinstance(value, dict):
-            parts = []
-            for sub_key, sub_value in value.items():
-                if sub_value:
-                    parts.append(f"{sub_key}: {sub_value}")
-            value = ", ".join(parts)
+    text = (
+        f"📅 План на сегодня"
+        + (f" — день {day_number}" if day_number is not None else "")
+        + "\n\n"
+        + "\n\n".join(lines)
+    )
 
-        if value:
-            lines.append(f"{label}: {value}")
+    await message_obj.answer(
+        text,
+        reply_markup=daily_execution_keyboard()
+    )
 
-    if not lines:
-        return ""
+def get_next_pending_daily_task(tasks: list[dict]) -> dict | None:
+    if not tasks:
+        return None
 
-    return "Вот что я зафиксировал по твоей цели:\n\n" + "\n".join(lines)
+    for task in tasks:
+        status = task.get("status", "pending")
+
+        if status not in {"done", "skipped", "failed"}:
+            return task
+
+    return None
 
 @router.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
@@ -406,6 +464,29 @@ async def get_goal(message: Message, state: FSMContext):
 async def clarify_goal(message: Message, state: FSMContext):
     data = await state.get_data()
     goal_id = data.get("goal_id")
+    profiling_result = data.get("profiling_result") or {}
+
+    question_type = get_question_type(profiling_result)
+    allow_free_text = profiling_result.get("allow_free_text", True)
+    suggested_options = profiling_result.get("suggested_options") or []
+
+    if question_type == "choice" and suggested_options:
+        text = render_profiling_question_text(profiling_result)
+        await message.answer("Для этого вопроса выбери один из вариантов ниже 👇")
+        await message.answer(
+            text,
+            reply_markup=build_options_keyboard(suggested_options)
+        )
+        return
+
+    if not allow_free_text and suggested_options:
+        text = render_profiling_question_text(profiling_result)
+        await message.answer("Для этого вопроса выбери один из вариантов ниже 👇")
+        await message.answer(
+            text,
+            reply_markup=build_options_keyboard(suggested_options)
+        )
+        return
 
     result = await submit_profiling_answer(goal_id, message.text)
     await state.update_data(profiling_result=result)
@@ -418,6 +499,7 @@ async def clarify_goal(message: Message, state: FSMContext):
 
 @router.callback_query(GoalFlow.choosing_coach_style)
 async def choose_coach_style_callback(callback: CallbackQuery, state: FSMContext):
+    
     data = callback.data
 
     if data == "coach_aggressive":
@@ -451,6 +533,30 @@ async def choose_coach_style_callback(callback: CallbackQuery, state: FSMContext
     await send_profiling_response(callback.message, result, state)
     await callback.answer()
 
+@router.callback_query(lambda c: c.data.startswith("profile_option:"))
+async def profile_option_callback(callback: CallbackQuery, state: FSMContext):
+    selected_value = callback.data.replace("profile_option:", "", 1)
+
+    user_data = await state.get_data()
+    goal_id = user_data.get("goal_id")
+
+    result = await submit_profiling_answer(goal_id, selected_value)
+    await state.update_data(profiling_result=result)
+
+    await callback.message.answer(f"Выбрано: {selected_value} ✅")
+
+    if result.get("is_completed"):
+        await send_plan_preview(
+            callback.message,
+            goal_id,
+            state,
+            profiling_result=result,
+        )
+        await callback.answer()
+        return
+
+    await send_profiling_response(callback.message, result, state)
+    await callback.answer()
 
 @router.message(GoalFlow.collecting_profile)
 async def collect_profile(message: Message, state: FSMContext):
@@ -463,6 +569,9 @@ async def collect_profile(message: Message, state: FSMContext):
 @router.callback_query(GoalFlow.executing_plan)
 async def execution_callback(callback: CallbackQuery, state: FSMContext):
     data = callback.data
+    if data in {"daily_task_done", "daily_task_skip", "daily_task_proof"}:
+        await callback.answer()
+        return
 
     if data == "step_done":
         await callback.message.answer(
@@ -482,6 +591,67 @@ async def execution_callback(callback: CallbackQuery, state: FSMContext):
 
     await callback.answer("Неизвестное действие")
 
+@router.callback_query(GoalFlow.executing_plan)
+async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
+    data = callback.data
+    user_data = await state.get_data()
+
+    current_daily_tasks = user_data.get("current_daily_tasks") or []
+    goal_id = user_data.get("goal_id")
+
+    current_task = get_next_pending_daily_task(current_daily_tasks)
+
+    if data in {"daily_task_done", "daily_task_skip"}:
+        if not current_task:
+            await callback.message.answer("На сегодня больше нет активных задач ✅")
+            await callback.answer()
+            return
+
+        task_id = current_task.get("id") or current_task.get("task_id")
+
+        if not task_id:
+            await callback.message.answer("Не удалось определить задачу для обновления.")
+            await callback.answer()
+            return
+
+        new_status = "done" if data == "daily_task_done" else "skipped"
+
+        await set_daily_task_status(task_id, new_status)
+
+        today_plan = await get_today_daily_plan(goal_id)
+        tasks = today_plan.get("tasks") or today_plan.get("daily_tasks") or []
+
+        await state.update_data(
+            current_daily_plan=today_plan,
+            current_daily_plan_id=today_plan.get("id") or today_plan.get("daily_plan_id"),
+            current_daily_tasks=tasks,
+        )
+
+        status_text = "✅ Задача отмечена как выполненная" if new_status == "done" else "⏭ Задача отмечена как пропущенная"
+
+        await callback.message.answer(status_text)
+        await send_today_daily_plan(callback.message, state)
+        await callback.answer()
+        return
+
+    if data == "daily_task_proof":
+        current_task = get_next_pending_daily_task(current_daily_tasks)
+
+        if not current_task:
+            await callback.message.answer("На сегодня нет активной задачи для proof.")
+            await callback.answer()
+            return
+
+        task_id = current_task.get("id") or current_task.get("task_id")
+
+        await state.update_data(current_daily_task_id=task_id)
+
+        await callback.message.answer(
+            "Отправь proof по текущей задаче: текст, фото или файл."
+        )
+        await state.set_state(GoalFlow.waiting_daily_proof)
+        await callback.answer()
+        return
 
 @router.message(GoalFlow.waiting_done_comment)
 async def done_comment_handler(message: Message, state: FSMContext):
@@ -604,6 +774,29 @@ async def fail_comment_handler(message: Message, state: FSMContext):
     await state.update_data(current_task_index=current_task_index + 1)
     await send_current_step(message, state)
 
+@router.message(GoalFlow.waiting_daily_proof)
+async def daily_proof_handler(message: Message, state: FSMContext):
+    if message.photo:
+        proof_type = "photo"
+        proof_label = "📸 Фото получено"
+    elif message.document:
+        proof_type = "file"
+        proof_label = "📎 Файл получен"
+    else:
+        proof_type = "text"
+        proof_label = "📝 Текст получен"
+
+    await state.update_data(
+        pending_daily_proof_type=proof_type
+    )
+
+    await message.answer(
+        f"{proof_label}\n\nProof принят. Возвращаю тебя к плану на сегодня 👇"
+    )
+
+    await state.set_state(GoalFlow.executing_plan)
+    await send_today_daily_plan(message, state)
+
 @router.callback_query(GoalFlow.confirming_plan)
 async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
     data = callback.data
@@ -615,21 +808,20 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
         await accept_plan(goal_id)
 
         plan = await get_current_plan(goal_id)
-        steps = plan.get("content", {}).get("steps", [])
+
         await state.update_data(
-        plan=plan,
-        steps=steps,
-        current_task_index=0,
-        done_count=0,
-        failed_count=0
-)
+            plan=plan,
+            current_task_index=0,
+            done_count=0,
+            failed_count=0
+        )
 
         await callback.message.answer(
             "План принят ✅\n\nТеперь начинаем выполнение."
         )
 
         await state.set_state(GoalFlow.executing_plan)
-        await send_current_step(callback.message, state)
+        await send_today_daily_plan(callback.message, state)
 
     elif data == "reject_plan":
         await callback.message.answer("Ок, переделаю план...")

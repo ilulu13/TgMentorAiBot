@@ -195,3 +195,44 @@ async def create_step_proof(checkin_id: str, step_id: str, payload: dict):
             json=payload
         )
         return await _handle_response(response)
+    
+async def get_daily_plans(goal_id: str):
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans"
+        )
+        return await _handle_response(response)
+
+
+async def get_today_daily_plan(goal_id: str):
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/today"
+        )
+        return await _handle_response(response)
+
+
+async def get_daily_plan_by_day(goal_id: str, day_number: int):
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/{day_number}"
+        )
+        return await _handle_response(response)
+
+
+async def set_daily_task_status(task_id: str, status: str):
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            f"{BACKEND_BASE_URL}/daily-tasks/{task_id}/status",
+            json={"status": status}
+        )
+        return await _handle_response(response)
+
+
+async def set_daily_plan_status(daily_plan_id: str, status: str):
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            f"{BACKEND_BASE_URL}/daily-plans/{daily_plan_id}/status",
+            json={"status": status}
+        )
+        return await _handle_response(response)
