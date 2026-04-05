@@ -330,18 +330,24 @@ async def send_today_daily_plan(message_obj, state: FSMContext):
     data = await state.get_data()
     goal_id = data.get("goal_id")
 
-    today_plan = await get_today_daily_plan(goal_id)
+    today_response = await get_today_daily_plan(goal_id)
 
-    if not today_plan:
+    if not today_response:
         await message_obj.answer("На сегодня пока нет плана.")
         return
 
-    daily_plan_id = today_plan.get("id") or today_plan.get("daily_plan_id")
-    day_number = today_plan.get("day_number")
-    tasks = today_plan.get("tasks") or today_plan.get("daily_tasks") or []
+    daily_plan = today_response.get("daily_plan") or {}
+
+    if not daily_plan:
+        await message_obj.answer("На сегодня пока нет плана.")
+        return
+
+    daily_plan_id = daily_plan.get("id") or daily_plan.get("daily_plan_id")
+    day_number = daily_plan.get("day_number")
+    tasks = daily_plan.get("tasks") or daily_plan.get("daily_tasks") or []
 
     await state.update_data(
-        current_daily_plan=today_plan,
+        current_daily_plan=daily_plan,
         current_daily_plan_id=daily_plan_id,
         current_daily_tasks=tasks,
     )
@@ -383,18 +389,6 @@ async def send_today_daily_plan(message_obj, state: FSMContext):
         text,
         reply_markup=daily_execution_keyboard()
     )
-
-def get_next_pending_daily_task(tasks: list[dict]) -> dict | None:
-    if not tasks:
-        return None
-
-    for task in tasks:
-        status = task.get("status", "pending")
-
-        if status not in {"done", "skipped", "failed"}:
-            return task
-
-    return None
 
 @router.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
@@ -632,16 +626,21 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
 
         await set_daily_task_status(task_id, new_status)
 
-        today_plan = await get_today_daily_plan(goal_id)
-        tasks = today_plan.get("tasks") or today_plan.get("daily_tasks") or []
+        today_response = await get_today_daily_plan(goal_id)
+        daily_plan = today_response.get("daily_plan") or {}
+        tasks = daily_plan.get("tasks") or daily_plan.get("daily_tasks") or []
 
         await state.update_data(
-            current_daily_plan=today_plan,
-            current_daily_plan_id=today_plan.get("id") or today_plan.get("daily_plan_id"),
+            current_daily_plan=daily_plan,
+            current_daily_plan_id=daily_plan.get("id") or daily_plan.get("daily_plan_id"),
             current_daily_tasks=tasks,
         )
 
-        status_text = "✅ Задача отмечена как выполненная" if new_status == "done" else "⏭ Задача отмечена как пропущенная"
+        status_text = (
+            "✅ Задача отмечена как выполненная"
+            if new_status == "done"
+            else "⏭ Задача отмечена как пропущенная"
+        )
 
         await callback.message.answer(status_text)
         await send_today_daily_plan(callback.message, state)
