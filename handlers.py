@@ -574,12 +574,12 @@ async def collect_profile(message: Message, state: FSMContext):
 
 
 
-@router.callback_query(GoalFlow.executing_plan)
+@router.callback_query(
+    GoalFlow.executing_plan,
+    lambda c: c.data in {"step_done", "step_failed"},
+)
 async def execution_callback(callback: CallbackQuery, state: FSMContext):
     data = callback.data
-    if data in {"daily_task_done", "daily_task_skip", "daily_task_proof"}:
-        await callback.answer()
-        return
 
     if data == "step_done":
         await callback.message.answer(
@@ -599,7 +599,10 @@ async def execution_callback(callback: CallbackQuery, state: FSMContext):
 
     await callback.answer("Неизвестное действие")
 
-@router.callback_query(GoalFlow.executing_plan)
+@router.callback_query(
+    GoalFlow.executing_plan,
+    lambda c: c.data in {"daily_task_done", "daily_task_skip", "daily_task_proof"},
+)
 async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
     data = callback.data
     user_data = await state.get_data()
@@ -648,8 +651,6 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
         return
 
     if data == "daily_task_proof":
-        current_task = get_next_pending_daily_task(current_daily_tasks)
-
         if not current_task:
             await callback.message.answer("На сегодня нет активной задачи для proof.")
             await callback.answer()
