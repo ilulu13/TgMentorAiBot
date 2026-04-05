@@ -390,6 +390,18 @@ async def send_today_daily_plan(message_obj, state: FSMContext):
         reply_markup=daily_execution_keyboard()
     )
 
+def get_next_pending_daily_task(tasks: list[dict]) -> dict | None:
+    if not tasks:
+        return None
+
+    for task in tasks:
+        status = task.get("status", "pending")
+
+        if status not in {"done", "skipped", "failed"}:
+            return task
+
+    return None
+
 @router.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     telegram_user = message.from_user
