@@ -352,11 +352,20 @@ async def send_today_daily_plan(message_obj, state: FSMContext):
         current_daily_tasks=tasks,
     )
 
+    text = render_today_daily_plan_text(day_number, tasks)
+
+    sent_message = await message_obj.answer(
+        text,
+        reply_markup=daily_execution_keyboard()
+    )
+
+    await state.update_data(
+        current_daily_message_id=sent_message.message_id
+    )
+
+def render_today_daily_plan_text(day_number: int | None, tasks: list[dict]) -> str:
     if not tasks:
-        await message_obj.answer(
-            f"📅 День {day_number}\n\nНа сегодня задач пока нет."
-        )
-        return
+        return f"📅 День {day_number}\n\nНа сегодня задач пока нет."
 
     lines = []
     for index, task in enumerate(tasks, start=1):
@@ -378,16 +387,11 @@ async def send_today_daily_plan(message_obj, state: FSMContext):
 
         lines.append(line)
 
-    text = (
+    return (
         f"📅 План на сегодня"
         + (f" — день {day_number}" if day_number is not None else "")
         + "\n\n"
         + "\n\n".join(lines)
-    )
-
-    await message_obj.answer(
-        text,
-        reply_markup=daily_execution_keyboard()
     )
 
 def get_next_pending_daily_task(tasks: list[dict]) -> dict | None:
@@ -651,15 +655,17 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
             current_daily_tasks=tasks,
         )
 
-        status_text = (
-            "✅ Задача отмечена как выполненная"
-            if new_status == "done"
-            else "⏭ Задача отмечена как пропущенная"
+        day_number = daily_plan.get("day_number")
+        text = render_today_daily_plan_text(day_number, tasks)
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=daily_execution_keyboard()
         )
 
-        await callback.message.answer(status_text)
-        await send_today_daily_plan(callback.message, state)
-        await callback.answer()
+        await callback.answer(
+            "Задача обновлена ✅" if new_status == "done" else "Задача пропущена ⏭"
+        )
         return
 
     if data == "daily_task_proof":
