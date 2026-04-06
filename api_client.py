@@ -205,14 +205,14 @@ async def get_daily_plans(goal_id: str):
 
 
 async def get_today_daily_plan(goal_id: str):
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.get(
             f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/today"
         )
         return await _handle_response(response)
     
 async def get_next_daily_plan(goal_id: str):
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.get(
             f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/next"
         )
