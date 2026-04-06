@@ -374,6 +374,13 @@ async def send_next_daily_plan(message_obj, state: FSMContext):
         await message_obj.answer("Не удалось получить следующий день плана.")
         return
 
+    if next_response.get("error") == "timeout":
+        await message_obj.answer(
+            "План принят ✅\n\n"
+            "Чеклист дня готовится чуть дольше обычного. Попробуй через несколько секунд."
+        )
+        return
+
     daily_plan = next_response.get("daily_plan")
 
     if not daily_plan:
