@@ -598,7 +598,6 @@ async def clarify_goal(message: Message, state: FSMContext):
 
 @router.callback_query(GoalFlow.choosing_coach_style)
 async def choose_coach_style_callback(callback: CallbackQuery, state: FSMContext):
-    
     data = callback.data
 
     if data == "coach_aggressive":
@@ -614,6 +613,8 @@ async def choose_coach_style_callback(callback: CallbackQuery, state: FSMContext
         await callback.answer("Ошибка выбора")
         return
 
+    await callback.answer()
+
     user_data = await state.get_data()
     goal_id = user_data.get("goal_id")
 
@@ -626,12 +627,9 @@ async def choose_coach_style_callback(callback: CallbackQuery, state: FSMContext
 
     if result.get("is_completed"):
         await send_plan_preview(callback.message, goal_id, state, profiling_result=result)
-        await callback.answer()
         return
 
     await send_profiling_response(callback.message, result, state)
-    await callback.answer()
-
 @router.callback_query(lambda c: c.data.startswith("profile_option:"))
 async def profile_option_callback(callback: CallbackQuery, state: FSMContext):
     raw_index = callback.data.replace("profile_option:", "", 1)
