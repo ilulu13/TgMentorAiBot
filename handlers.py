@@ -29,6 +29,7 @@ from api_client import (
     create_step_proof,
     get_daily_plans,
     get_today_daily_plan,
+    get_next_daily_plan,
     get_daily_plan_by_day,
     set_daily_task_status,
     set_daily_plan_status,
@@ -363,6 +364,46 @@ async def send_today_daily_plan(message_obj, state: FSMContext):
         current_daily_message_id=sent_message.message_id
     )
 
+async def send_next_daily_plan(message_obj, state: FSMContext):
+    data = await state.get_data()
+    goal_id = data.get("goal_id")
+
+    next_response = await get_next_daily_plan(goal_id)
+
+    if not next_response:
+        await message_obj.answer("Не удалось получить следующий день плана.")
+        return
+
+    daily_plan = next_response.get("daily_plan")
+
+    if not daily_plan:
+        await message_obj.answer(
+            "План принят ✅\n\n"
+            "Следующий день по расписанию пока не наступил. "
+            "Я пришлю задачи, когда придет подходящий день."
+        )
+        return
+
+    daily_plan_id = daily_plan.get("id") or daily_plan.get("daily_plan_id")
+    tasks = daily_plan.get("tasks") or []
+
+    await state.update_data(
+        current_daily_plan=daily_plan,
+        current_daily_plan_id=daily_plan_id,
+        current_daily_tasks=tasks,
+    )
+
+    text = render_next_daily_plan_text(daily_plan)
+
+    sent_message = await message_obj.answer(
+        text,
+        reply_markup=daily_execution_keyboard()
+    )
+
+    await state.update_data(
+        current_daily_message_id=sent_message.message_id
+    )
+
 def render_today_daily_plan_text(day_number: int | None, tasks: list[dict]) -> str:
     if not tasks:
         return f"📅 День {day_number}\n\nНа сегодня задач пока нет."
@@ -393,6 +434,47 @@ def render_today_daily_plan_text(day_number: int | None, tasks: list[dict]) -> s
         + "\n\n"
         + "\n\n".join(lines)
     )
+
+def render_next_daily_plan_text(daily_plan: dict) -> str:
+    parts = []
+
+    headline = daily_plan.get("headline")
+    focus = daily_plan.get("focus")
+    summary = daily_plan.get("summary")
+    tasks = daily_plan.get("tasks") or []
+
+    if headline:
+        parts.append(f"🔥 {headline}")
+
+    if focus:
+        parts.append(f"Фокус дня: {focus}")
+
+    if summary:
+        parts.append(summary)
+
+    if tasks:
+        parts.append("")
+        parts.append("Чек-лист на день:")
+
+        for index, task in enumerate(tasks, start=1):
+            title = task.get("title") or "Задача"
+            instructions = task.get("instructions") or task.get("description") or ""
+            estimated_minutes = task.get("estimated_minutes")
+            proof_required = task.get("proof_required")
+
+            line = f"{index}. {title}"
+            if estimated_minutes:
+                line += f" ({estimated_minutes} мин)"
+
+            parts.append(line)
+
+            if instructions:
+                parts.append(f"   — {instructions}")
+
+            if proof_required:
+                parts.append("   — Понадобится подтверждение выполнения")
+
+    return "\n".join(parts)
 
 def get_next_pending_daily_task(tasks: list[dict]) -> dict | None:
     if not tasks:
@@ -853,7 +935,7 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
         )
 
         await state.set_state(GoalFlow.executing_plan)
-        await send_today_daily_plan(callback.message, state)
+        await send_next_daily_plan(callback.message, state)
 
     elif data == "reject_plan":
         await callback.message.answer("Ок, переделаю план...")
