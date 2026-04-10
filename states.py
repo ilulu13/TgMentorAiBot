@@ -8,3 +8,4 @@ class GoalFlow(StatesGroup):
     confirming_plan = State()
     executing_plan = State()
     waiting_daily_proof = State()
+    waiting_skip_reason = State()

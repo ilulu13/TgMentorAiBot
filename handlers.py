@@ -649,11 +649,15 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
     current_daily_tasks = user_data.get("current_daily_tasks") or []
     current_task = get_next_pending_daily_task(current_daily_tasks)
 
+    # =========================
+    # DONE / SKIP
+    # =========================
     if data in {"daily_task_done", "daily_task_skip"}:
         if not current_task:
             return
 
         task_id = current_task.get("id") or current_task.get("task_id")
+
         if not task_id:
             await callback.message.answer("Не удалось определить задачу для обновления.")
             return
@@ -661,9 +665,52 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
         new_status = "done" if data == "daily_task_done" else "skipped"
 
         await set_daily_task_status(task_id, new_status)
-        await send_next_daily_plan(callback.message, state, source="execution")
-        return
 
+        # =========================
+        # DONE
+        # =========================
+        if new_status == "done":
+            data = await state.get_data()
+            streak = data.get("streak", 0) + 1
+
+            await state.update_data(streak=streak)
+
+            await callback.message.answer(
+                f"🔥 Отлично. Серия: {streak} дней подряд.\n\n"
+                "Не сбавляй темп 👇"
+            )
+
+            await send_next_daily_plan(callback.message, state, source="execution")
+            return
+
+        # =========================
+        # SKIP
+        # =========================
+        if new_status == "skipped":
+            data = await state.get_data()
+            streak = data.get("streak", 0)
+
+            await state.update_data(streak=0)
+
+            if streak >= 3:
+                await callback.message.answer(
+                    f"Ты прервал серию из {streak} дней ❌\n\n"
+                    "Это откат назад.\n"
+                    "Напиши, что пошло не так."
+                )
+            else:
+                await callback.message.answer(
+                    "Ты пропустил задачу.\n\n"
+                    "Важно не входить в паттерн пропусков.\n"
+                    "Напиши, почему."
+                )
+
+            await state.set_state(GoalFlow.waiting_skip_reason)
+            return
+
+    # =========================
+    # PROOF
+    # =========================
     if data == "daily_task_proof":
         if not current_task:
             return
@@ -675,6 +722,7 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(
             "Отправь proof по текущей задаче: текст, фото или файл."
         )
+
         await state.set_state(GoalFlow.waiting_daily_proof)
         return
 
@@ -729,8 +777,10 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
         plan = await get_current_plan(goal_id)
 
         await state.update_data(
-            plan=plan
-        )
+            plan=plan,
+            streak=0,
+            last_skip_reason=None
+)
 
         await state.set_state(GoalFlow.executing_plan)
         await send_next_daily_plan(callback.message, state, source="accept")
@@ -770,3 +820,26 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
         return
 
     await callback.answer("Неизвестное действие")
+
+@router.message(GoalFlow.waiting_skip_reason)
+async def skip_reason_handler(message: Message, state: FSMContext):
+    reason = (message.text or "").strip()
+
+    await state.update_data(
+        last_skip_reason=reason
+    )
+
+    if reason:
+        await message.answer(
+            "Ок, понял.\n\n"
+            "Главное — не выпадать из процесса.\n"
+            "Сейчас возвращаемся в ритм 👇"
+        )
+    else:
+        await message.answer(
+            "Принял.\n\n"
+            "Возвращаемся в ритм 👇"
+        )
+
+    await state.set_state(GoalFlow.executing_plan)
+    await send_next_daily_plan(message, state, source="execution")
