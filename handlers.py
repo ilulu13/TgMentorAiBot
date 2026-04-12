@@ -314,7 +314,6 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
             current_daily_message_id=None,
         )
         return
-
     daily_plan_id = daily_plan.get("id") or daily_plan.get("daily_plan_id")
     tasks = daily_plan.get("tasks") or []
 
@@ -324,7 +323,17 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
         current_daily_tasks=tasks,
     )
 
-    text = render_daily_plan_text(daily_plan)
+    data = await state.get_data()
+    streak = data.get("streak", 0)
+    coaching_mode = data.get("coaching_mode", "normal")
+    last_skip_reason = data.get("last_skip_reason")
+
+    text = render_daily_plan_text(
+        daily_plan,
+        streak=streak,
+        coaching_mode=coaching_mode,
+        last_skip_reason=last_skip_reason,
+    )
 
     if current_message_id:
         try:
@@ -346,9 +355,12 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
     await state.update_data(
         current_daily_message_id=sent_message.message_id
     )
-
-
-def render_daily_plan_text(daily_plan: dict) -> str:
+def render_daily_plan_text(
+    daily_plan: dict,
+    streak: int = 0,
+    coaching_mode: str = "normal",
+    last_skip_reason: str | None = None,
+) -> str:
     parts = []
 
     headline = daily_plan.get("headline")
@@ -356,6 +368,28 @@ def render_daily_plan_text(daily_plan: dict) -> str:
     summary = daily_plan.get("summary")
     main_task_title = daily_plan.get("main_task_title")
     tasks = daily_plan.get("tasks") or []
+
+       # =========================
+    # 🔥 АДАПТИВНЫЙ ТОН (NEW)
+    # =========================
+    if coaching_mode == "recovery":
+        parts.append("Возвращаемся в ритм. Сегодня без перегруза — главное снова войти в процесс 👇")
+        if last_skip_reason:
+            parts.append(f"Причина прошлого пропуска: {last_skip_reason}")
+
+    elif coaching_mode == "momentum":
+        if streak >= 6:
+            parts.append(f"⚡ Ты на уровне дисциплины. Серия: {streak}")
+        else:
+            parts.append(f"🔥 Ты в ритме. Серия: {streak}")
+
+    else:  # normal
+        if streak == 0:
+            parts.append("Начинаем спокойно. Главное — задать темп 👇")
+        else:
+            parts.append(f"Хорошее движение. Серия: {streak} 👇")
+
+    parts.append("")
 
     # 🔥 Заголовок дня
     if headline:
@@ -670,10 +704,19 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
         # DONE
         # =========================
         if new_status == "done":
-            data = await state.get_data()
-            streak = data.get("streak", 0) + 1
+            state_data = await state.get_data()
+            streak = state_data.get("streak", 0) + 1
 
-            await state.update_data(streak=streak)
+            coaching_mode = "normal"
+            if streak >= 3:
+                coaching_mode = "momentum"
+
+            await state.update_data(
+                streak=streak,
+                coaching_mode=coaching_mode,
+                last_skip_reason=None,
+                skip_streak=0,
+            )
 
             await callback.message.answer(
                 f"🔥 Отлично. Серия: {streak} дней подряд.\n\n"
@@ -687,12 +730,29 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
         # SKIP
         # =========================
         if new_status == "skipped":
-            data = await state.get_data()
-            streak = data.get("streak", 0)
+            state_data = await state.get_data()
+            streak = state_data.get("streak", 0)
+            skip_streak = state_data.get("skip_streak", 0) + 1
 
-            await state.update_data(streak=0)
+            await state.update_data(
+                streak=0,
+                coaching_mode="recovery",
+                skip_streak=skip_streak,
+            )
 
-            if streak >= 3:
+            if skip_streak >= 3:
+                await callback.message.answer(
+                    "Ты пропускаешь уже несколько задач подряд ❌\n\n"
+                    "Это уже не случайность — ты начинаешь выпадать из процесса.\n"
+                    "Напиши честно: ты действительно хочешь достичь этой цели?"
+                )
+            elif skip_streak == 2:
+                await callback.message.answer(
+                    "Второй пропуск подряд.\n\n"
+                    "Сейчас критический момент — либо возвращаешься, либо начинаешь откатываться.\n"
+                    "Почему пропустил?"
+                )
+            elif streak >= 3:
                 await callback.message.answer(
                     f"Ты прервал серию из {streak} дней ❌\n\n"
                     "Это откат назад.\n"
@@ -769,7 +829,9 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
         goal_id = user_data.get("goal_id")
 
         if not goal_id:
-            await callback.message.answer("Не нашел активную цель. Начни заново через /start")
+            await callback.message.answer(
+                "Не нашел активную цель. Начни заново через /start"
+            )
             return
 
         await accept_plan(goal_id)
@@ -779,8 +841,10 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
         await state.update_data(
             plan=plan,
             streak=0,
-            last_skip_reason=None
-)
+            last_skip_reason=None,
+            coaching_mode="normal",
+            skip_streak=0,
+        )
 
         await state.set_state(GoalFlow.executing_plan)
         await send_next_daily_plan(callback.message, state, source="accept")
@@ -795,7 +859,9 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
         goal_id = user_data.get("goal_id")
 
         if not goal_id:
-            await callback.message.answer("Не нашел активную цель. Начни заново через /start")
+            await callback.message.answer(
+                "Не нашел активную цель. Начни заново через /start"
+            )
             return
 
         await generate_plan(goal_id)
@@ -813,9 +879,8 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
             f"📌 Коротко:\n{summary}"
             f"{roadmap_text}\n\n"
             f"👉 Принять этот план?",
-            reply_markup=confirm_plan_keyboard()
+            reply_markup=confirm_plan_keyboard(),
         )
-
         await state.set_state(GoalFlow.confirming_plan)
         return
 
@@ -826,8 +891,9 @@ async def skip_reason_handler(message: Message, state: FSMContext):
     reason = (message.text or "").strip()
 
     await state.update_data(
-        last_skip_reason=reason
-    )
+    last_skip_reason=reason,
+    coaching_mode="recovery"
+)
 
     if reason:
         await message.answer(
