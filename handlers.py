@@ -270,8 +270,8 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
 
     if next_response.get("error") == "timeout":
         await message_obj.answer(
-            "Чек-лист дня готовится чуть дольше обычного. Попробуй через несколько секунд."
-        )
+        "Обновляю следующий шаг. Это займет еще несколько секунд."
+    )
         return
 
     daily_plan = next_response.get("daily_plan")
@@ -484,6 +484,13 @@ def get_next_pending_daily_task(tasks: list[dict]) -> dict | None:
 
     return None
 
+def is_task_actionable(task: dict | None) -> bool:
+    if not task:
+        return False
+
+    status = task.get("status", "pending")
+    return status not in {"done", "skipped", "failed"}
+
 @router.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     telegram_user = message.from_user
@@ -683,19 +690,24 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
     current_daily_tasks = user_data.get("current_daily_tasks") or []
     current_task = get_next_pending_daily_task(current_daily_tasks)
 
+    # если уже нет активной задачи — молча выходим
+    if not is_task_actionable(current_task):
+        return
+
+    task_id = current_task.get("id") or current_task.get("task_id")
+    if not task_id:
+        return
+
+    # сразу блокируем старые кнопки на текущем сообщении
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
     # =========================
     # DONE / SKIP
     # =========================
     if data in {"daily_task_done", "daily_task_skip"}:
-        if not current_task:
-            return
-
-        task_id = current_task.get("id") or current_task.get("task_id")
-
-        if not task_id:
-            await callback.message.answer("Не удалось определить задачу для обновления.")
-            return
-
         new_status = "done" if data == "daily_task_done" else "skipped"
 
         await set_daily_task_status(task_id, new_status)
@@ -719,8 +731,7 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
             )
 
             await callback.message.answer(
-                f"🔥 Отлично. Серия: {streak} дней подряд.\n\n"
-                "Не сбавляй темп 👇"
+                f"🔥 Отлично. Серия: {streak} дней подряд."
             )
 
             await send_next_daily_plan(callback.message, state, source="execution")
@@ -772,11 +783,6 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
     # PROOF
     # =========================
     if data == "daily_task_proof":
-        if not current_task:
-            return
-
-        task_id = current_task.get("id") or current_task.get("task_id")
-
         await state.update_data(current_daily_task_id=task_id)
 
         await callback.message.answer(
