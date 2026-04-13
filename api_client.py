@@ -220,8 +220,11 @@ async def get_next_daily_plan(goal_id: str):
             response = await client.get(
                 f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/next"
             )
-            return await _handle_response(response)
+            data = await _handle_response(response)
+            print("DEBUG /daily-plans/next RESPONSE:", data)
+            return data
     except httpx.ReadTimeout:
+        print("DEBUG /daily-plans/next TIMEOUT")
         return {"error": "timeout"}
 
 async def get_daily_plan_by_day(goal_id: str, day_number: int):

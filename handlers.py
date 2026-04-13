@@ -258,25 +258,44 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
     goal_id = data.get("goal_id")
     current_message_id = data.get("current_daily_message_id")
 
+    print("DEBUG send_next_daily_plan START")
+    print("DEBUG goal_id:", goal_id)
+    print("DEBUG source:", source)
+    print("DEBUG current_message_id:", current_message_id)
+    print("DEBUG state keys:", list(data.keys()))
+
     if not goal_id:
         await message_obj.answer("Не нашел активную цель. Начни заново через /start")
         return
 
     next_response = await get_next_daily_plan(goal_id)
 
+    print("DEBUG next_response:", next_response)
+    print("DEBUG next_response type:", type(next_response))
+
+    if isinstance(next_response, dict):
+        print("DEBUG next_response keys:", list(next_response.keys()))
+        print("DEBUG next_response daily_plan:", next_response.get("daily_plan"))
+    else:
+        print("DEBUG next_response is not dict")
+
     if not next_response:
+        print("DEBUG next_response is empty:", next_response)
         await message_obj.answer("Не смог получить задачи на день. Попробуй еще раз.")
         return
 
     if next_response.get("error") == "timeout":
+        print("DEBUG next_response timeout branch")
         await message_obj.answer(
-        "Обновляю следующий шаг. Это займет еще несколько секунд."
-    )
+            "Обновляю следующий шаг. Это займет еще несколько секунд."
+        )
         return
 
     daily_plan = next_response.get("daily_plan")
 
     if not daily_plan:
+        print("DEBUG daily_plan is empty or null")
+        print("DEBUG source when daily_plan missing:", source)
         if source == "accept":
             text = (
                 "План принят ✅\n\n"
@@ -316,6 +335,10 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
         return
     daily_plan_id = daily_plan.get("id") or daily_plan.get("daily_plan_id")
     tasks = daily_plan.get("tasks") or []
+    print("DEBUG daily_plan exists")
+    print("DEBUG daily_plan_id:", daily_plan_id)
+    print("DEBUG tasks count:", len(tasks))
+    print("DEBUG daily_plan keys:", list(daily_plan.keys()))
 
     await state.update_data(
         current_daily_plan=daily_plan,
@@ -328,6 +351,12 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
     coaching_mode = data.get("coaching_mode", "normal")
     last_skip_reason = data.get("last_skip_reason")
 
+    print("DEBUG render params")
+    print("DEBUG streak:", streak)
+    print("DEBUG coaching_mode:", coaching_mode)
+    print("DEBUG last_skip_reason:", last_skip_reason)
+    print("DEBUG daily_plan before render:", daily_plan)
+
     text = render_daily_plan_text(
         daily_plan,
         streak=streak,
@@ -335,22 +364,34 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
         last_skip_reason=last_skip_reason,
     )
 
+    print("DEBUG render success")
+    print("DEBUG rendered text length:", len(text))
+    print("DEBUG rendered text preview:", text[:500])
+
     if current_message_id:
         try:
+            print("DEBUG trying edit_message_text")
             await message_obj.bot.edit_message_text(
                 chat_id=message_obj.chat.id,
                 message_id=current_message_id,
                 text=text,
                 reply_markup=daily_execution_keyboard(),
             )
+            print("DEBUG edit_message_text success")
             return
-        except Exception:
-            pass
+        except Exception as e:
+            print("DEBUG edit_message_text failed:", repr(e))
 
-    sent_message = await message_obj.answer(
-        text,
-        reply_markup=daily_execution_keyboard(),
-    )
+    try:
+        print("DEBUG trying answer()")
+        sent_message = await message_obj.answer(
+            text,
+            reply_markup=daily_execution_keyboard(),
+        )
+        print("DEBUG answer() success, message_id:", sent_message.message_id)
+    except Exception as e:
+        print("DEBUG answer() failed:", repr(e))
+        raise
 
     await state.update_data(
         current_daily_message_id=sent_message.message_id
