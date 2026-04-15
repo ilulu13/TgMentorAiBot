@@ -22,6 +22,7 @@ from api_client import (
     accept_plan,
     get_next_daily_plan,
     set_daily_task_status,
+    create_daily_task_proof,
 )
 
 router = Router()
@@ -253,16 +254,18 @@ async def send_plan_preview(message_obj, goal_id: str, state: FSMContext, profil
 
 
 
+# ======================================================
+# SEND NEXT DAILY PLAN
+# ======================================================
+
+# ======================================================
+# SEND NEXT DAILY PLAN
+# ======================================================
+
 async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "general"):
     data = await state.get_data()
     goal_id = data.get("goal_id")
     current_message_id = data.get("current_daily_message_id")
-
-    print("DEBUG send_next_daily_plan START")
-    print("DEBUG goal_id:", goal_id)
-    print("DEBUG source:", source)
-    print("DEBUG current_message_id:", current_message_id)
-    print("DEBUG state keys:", list(data.keys()))
 
     if not goal_id:
         await message_obj.answer("Не нашел активную цель. Начни заново через /start")
@@ -270,49 +273,26 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
 
     next_response = await get_next_daily_plan(goal_id)
 
-    print("DEBUG next_response:", next_response)
-    print("DEBUG next_response type:", type(next_response))
-
-    if isinstance(next_response, dict):
-        print("DEBUG next_response keys:", list(next_response.keys()))
-        print("DEBUG next_response daily_plan:", next_response.get("daily_plan"))
-    else:
-        print("DEBUG next_response is not dict")
-
     if not next_response:
-        print("DEBUG next_response is empty:", next_response)
         await message_obj.answer("Не смог получить задачи на день. Попробуй еще раз.")
         return
 
     if next_response.get("error") == "timeout":
-        print("DEBUG next_response timeout branch")
-        await message_obj.answer(
-            "Обновляю следующий шаг. Это займет еще несколько секунд."
-        )
+        await message_obj.answer("Обновляю следующий шаг...")
         return
 
     daily_plan = next_response.get("daily_plan")
 
+    # =========================
+    # НЕТ АКТИВНОГО ПЛАНА
+    # =========================
     if not daily_plan:
-        print("DEBUG daily_plan is empty or null")
-        print("DEBUG source when daily_plan missing:", source)
         if source == "accept":
-            text = (
-                "План принят ✅\n\n"
-                "Следующий день по расписанию пока не наступил. "
-                "Я пришлю задачи, когда придет подходящий день."
-            )
+            text = "План принят ✅\n\nСледующий день пришлю по расписанию."
         elif source == "execution":
-            text = (
-                "✅ День завершён\n\n"
-                "Ты закрыл все задачи на сегодня.\n"
-                "Следующий день пришлю по расписанию."
-            )
+            text = "✅ День завершён\n\nСледующий день пришлю позже."
         else:
-            text = (
-                "Сейчас активных задач нет.\n"
-                "Следующий день пришлю, когда придет время."
-            )
+            text = "Сейчас нет активных задач."
 
         if current_message_id:
             try:
@@ -333,29 +313,12 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
             current_daily_message_id=None,
         )
         return
+
+    # =========================
+    # НОРМАЛЬНЫЙ FLOW
+    # =========================
     daily_plan_id = daily_plan.get("id") or daily_plan.get("daily_plan_id")
     tasks = daily_plan.get("tasks") or []
-    print("DEBUG daily_plan exists")
-    print("DEBUG daily_plan_id:", daily_plan_id)
-    print("DEBUG tasks count:", len(tasks))
-    print("DEBUG daily_plan keys:", list(daily_plan.keys()))
-
-    print("DEBUG daily_plan proofs_required_count:", daily_plan.get("proofs_required_count"))
-    print("DEBUG daily_plan proofs_accepted_count:", daily_plan.get("proofs_accepted_count"))
-    print("DEBUG daily_plan due_at:", daily_plan.get("due_at"))
-    print("DEBUG daily_plan cycle_status:", daily_plan.get("cycle_status"))
-    print("DEBUG daily_plan cycle:", daily_plan.get("cycle"))
-
-    for i, task in enumerate(tasks, start=1):
-     print(f"DEBUG task #{i} keys:", list(task.keys()))
-     print(f"DEBUG task #{i} title:", task.get("title"))
-     print(f"DEBUG task #{i} proof_required:", task.get("proof_required"))
-     print(f"DEBUG task #{i} proof_status:", task.get("proof_status"))
-     print(f"DEBUG task #{i} recommended_proof_type:", task.get("recommended_proof_type"))
-     print(f"DEBUG task #{i} proof_prompt:", task.get("proof_prompt"))
-     print(f"DEBUG task #{i} status:", task.get("status"))
-     print(f"DEBUG task #{i} bucket:", task.get("bucket"))
-     print(f"DEBUG task #{i} proofs:", task.get("proofs"))
 
     await state.update_data(
         current_daily_plan=daily_plan,
@@ -363,16 +326,10 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
         current_daily_tasks=tasks,
     )
 
-    data = await state.get_data()
-    streak = data.get("streak", 0)
-    coaching_mode = data.get("coaching_mode", "normal")
-    last_skip_reason = data.get("last_skip_reason")
-
-    print("DEBUG render params")
-    print("DEBUG streak:", streak)
-    print("DEBUG coaching_mode:", coaching_mode)
-    print("DEBUG last_skip_reason:", last_skip_reason)
-    print("DEBUG daily_plan before render:", daily_plan)
+    state_data = await state.get_data()
+    streak = state_data.get("streak", 0)
+    coaching_mode = state_data.get("coaching_mode", "normal")
+    last_skip_reason = state_data.get("last_skip_reason")
 
     text = render_daily_plan_text(
         daily_plan,
@@ -381,38 +338,33 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
         last_skip_reason=last_skip_reason,
     )
 
-    print("DEBUG render success")
-    print("DEBUG rendered text length:", len(text))
-    print("DEBUG rendered text preview:", text[:500])
-
+    # =========================
+    # РЕДАКТИРУЕМ ИЛИ СОЗДАЕМ
+    # =========================
     if current_message_id:
         try:
-            print("DEBUG trying edit_message_text")
             await message_obj.bot.edit_message_text(
                 chat_id=message_obj.chat.id,
                 message_id=current_message_id,
                 text=text,
-                reply_markup=daily_execution_keyboard(),
+                reply_markup=daily_execution_keyboard(tasks),
             )
-            print("DEBUG edit_message_text success")
             return
-        except Exception as e:
-            print("DEBUG edit_message_text failed:", repr(e))
+        except Exception:
+            pass
 
-    try:
-        print("DEBUG trying answer()")
-        sent_message = await message_obj.answer(
-            text,
-            reply_markup=daily_execution_keyboard(),
-        )
-        print("DEBUG answer() success, message_id:", sent_message.message_id)
-    except Exception as e:
-        print("DEBUG answer() failed:", repr(e))
-        raise
-
-    await state.update_data(
-        current_daily_message_id=sent_message.message_id
+    sent = await message_obj.answer(
+        text,
+        reply_markup=daily_execution_keyboard(tasks),
     )
+
+    await state.update_data(current_daily_message_id=sent.message_id)
+
+
+# ======================================================
+# TEXT RENDER
+# ======================================================
+
 def render_daily_plan_text(
     daily_plan: dict,
     streak: int = 0,
@@ -422,132 +374,167 @@ def render_daily_plan_text(
     parts = []
 
     headline = daily_plan.get("headline")
-    focus = daily_plan.get("focus")
+    focus = daily_plan.get("focus") or daily_plan.get("focus_message")
     summary = daily_plan.get("summary")
     main_task_title = daily_plan.get("main_task_title")
     tasks = daily_plan.get("tasks") or []
 
-       # =========================
-    # 🔥 АДАПТИВНЫЙ ТОН (NEW)
+    proofs_required = daily_plan.get("proofs_required_count")
+    proofs_accepted = daily_plan.get("proofs_accepted_count")
+
+    # =========================
+    # ТОН
     # =========================
     if coaching_mode == "recovery":
-        parts.append("Возвращаемся в ритм. Сегодня без перегруза — главное снова войти в процесс 👇")
+        parts.append("Возвращаемся в ритм 👇")
         if last_skip_reason:
-            parts.append(f"Причина прошлого пропуска: {last_skip_reason}")
-
+            parts.append(f"Причина: {last_skip_reason}")
     elif coaching_mode == "momentum":
-        if streak >= 6:
-            parts.append(f"⚡ Ты на уровне дисциплины. Серия: {streak}")
-        else:
-            parts.append(f"🔥 Ты в ритме. Серия: {streak}")
-
-    else:  # normal
+        parts.append(f"🔥 Серия: {streak}")
+    else:
         if streak == 0:
-            parts.append("Начинаем спокойно. Главное — задать темп 👇")
+            parts.append("Начинаем спокойно 👇")
         else:
-            parts.append(f"Хорошее движение. Серия: {streak} 👇")
+            parts.append(f"Серия: {streak} 👇")
 
     parts.append("")
 
-    # 🔥 Заголовок дня
+    # =========================
+    # 📊 ПРОГРЕСС ДНЯ
+    # =========================
+    if proofs_required is not None:
+        parts.append(f"📊 Прогресс: {proofs_accepted or 0} / {proofs_required}")
+        parts.append("")
+
+    # =========================
+    # ЗАГОЛОВОК
+    # =========================
     if headline:
         parts.append(f"🔥 {headline}")
 
-    # 🎯 Фокус дня
     if focus:
-        parts.append(f"Фокус дня: {focus}")
+        parts.append(f"Фокус: {focus}")
 
-    # 🧠 Контекст
     if summary:
         parts.append(summary)
 
-    # 🎯 Главное действие дня
     if main_task_title:
         parts.append("")
-        parts.append("🎯 Главное сегодня:")
+        parts.append("🎯 Главное:")
         parts.append(main_task_title)
 
-    # 📋 Задачи
+    # =========================
+    # TASKS
+    # =========================
     if tasks:
-        must_tasks = []
-        should_tasks = []
-        bonus_tasks = []
+        parts.append("")
+        parts.append("📋 Задачи:")
 
-        for task in tasks:
-            task_type = task.get("type", "must")
+        current_task = get_next_pending_daily_task(tasks)
 
-            if task_type == "must":
-                must_tasks.append(task)
-            elif task_type == "should":
-                should_tasks.append(task)
-            else:
-                bonus_tasks.append(task)
-
-        def render_task(task: dict, index: int) -> list[str]:
-            lines = []
-
+        for i, task in enumerate(tasks, start=1):
             title = task.get("title") or "Задача"
             instructions = task.get("instructions") or task.get("description") or ""
-            estimated_minutes = task.get("estimated_minutes")
-            proof_required = task.get("proof_required")
+            proof_required = task.get("proof_required", False)
+            proof_prompt = task.get("proof_prompt")
+            proofs = task.get("proofs") or []
 
-            line = f"{index}. {title}"
-
-            if estimated_minutes:
-                line += f" ({estimated_minutes} мин)"
-
-            lines.append(line)
+            prefix = "👉 " if task == current_task else ""
+            parts.append(f"{prefix}{i}. {title}")
 
             if instructions:
-                lines.append(f"   — {instructions}")
+                parts.append(f"   — {instructions}")
 
+            # =========================
+            # PROOF STATUS
+            # =========================
             if proof_required:
-                lines.append("   — Понадобится подтверждение выполнения")
+                proof_accepted = any(p.get("status") == "accepted" for p in proofs)
 
-            return lines
+                if proof_accepted:
+                    parts.append("   — ✅ proof принят")
+                elif proofs:
+                    last = proofs[-1]
+                    last_status = last.get("status")
+                    review_message = (last.get("review_message") or "").strip()
 
-        if must_tasks:
-            parts.append("")
-            parts.append("📌 Обязательные:")
+                    if last_status == "rejected":
+                        parts.append("   — ❌ proof отклонён")
+                        if review_message:
+                            parts.append(f"   — 💬 {review_message}")
+                    elif last_status == "needs_more":
+                        parts.append("   — ⚠️ нужно доработать")
+                        if review_message:
+                            parts.append(f"   — 💬 {review_message}")
+                    else:
+                        parts.append("   — ⏳ проверяется")
+                else:
+                    parts.append("   — 📌 требуется proof")
 
-            for i, task in enumerate(must_tasks, start=1):
-                parts.extend(render_task(task, i))
-
-        if should_tasks:
-            parts.append("")
-            parts.append("➕ Дополнительно:")
-
-            for i, task in enumerate(should_tasks, start=1):
-                parts.extend(render_task(task, i))
-
-        if bonus_tasks:
-            parts.append("")
-            parts.append("🚀 Если есть энергия:")
-
-            for i, task in enumerate(bonus_tasks, start=1):
-                parts.extend(render_task(task, i))
+                if proof_prompt:
+                    parts.append(f"   — 👉 {proof_prompt}")
 
     return "\n".join(parts)
 
 
+# ======================================================
+# TASK HELPERS
+# ======================================================
+
 def get_next_pending_daily_task(tasks: list[dict]) -> dict | None:
+    """
+    Возвращает следующую задачу, на которой должен быть фокус пользователя.
+    """
+
     if not tasks:
         return None
 
     for task in tasks:
         status = task.get("status", "pending")
 
-        if status not in {"done", "skipped", "failed"}:
+        if status in {"done", "skipped", "failed"}:
+            continue
+
+        proof_required = task.get("proof_required", False)
+        proofs = task.get("proofs") or []
+
+        # если proof не нужен — задача сразу активна
+        if not proof_required:
+            return task
+
+        # если proof нужен, но его еще нет
+        if not proofs:
+            return task
+
+        # если proof есть, смотрим последний статус
+        last_proof_status = proofs[-1].get("status")
+
+        if last_proof_status in {"rejected", "needs_more", "accepted", "uploaded", "checking", None}:
             return task
 
     return None
 
+
 def is_task_actionable(task: dict | None) -> bool:
+    """
+    Можно ли нажимать DONE для этой задачи.
+    """
+
     if not task:
         return False
 
     status = task.get("status", "pending")
-    return status not in {"done", "skipped", "failed"}
+
+    if status in {"done", "skipped", "failed"}:
+        return False
+
+    proof_required = task.get("proof_required", False)
+
+    if proof_required:
+        proofs = task.get("proofs") or []
+        return any(proof.get("status") == "accepted" for proof in proofs)
+
+    return True
 
 @router.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
@@ -742,44 +729,105 @@ async def profile_option_callback(callback: CallbackQuery, state: FSMContext):
 async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
-    data = callback.data
-    user_data = await state.get_data()
+    state_data = await state.get_data()
 
-    current_daily_tasks = user_data.get("current_daily_tasks") or []
-    current_task = get_next_pending_daily_task(current_daily_tasks)
-
-    # если уже нет активной задачи — молча выходим
-    if not is_task_actionable(current_task):
+    # =========================
+    # 🔒 защита от спама кликов
+    # =========================
+    if state_data.get("daily_action_in_progress"):
         return
 
-    task_id = current_task.get("id") or current_task.get("task_id")
-    if not task_id:
-        return
+    await state.update_data(daily_action_in_progress=True)
 
-    # сразу блокируем старые кнопки на текущем сообщении
     try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
+        data = callback.data
+        user_data = await state.get_data()
 
-    # =========================
-    # DONE / SKIP
-    # =========================
-    if data in {"daily_task_done", "daily_task_skip"}:
-        new_status = "done" if data == "daily_task_done" else "skipped"
+        current_daily_tasks = user_data.get("current_daily_tasks") or []
+        current_task = get_next_pending_daily_task(current_daily_tasks)
 
-        await set_daily_task_status(task_id, new_status)
+        if not current_task:
+            return
+
+        task_id = current_task.get("id") or current_task.get("task_id")
+        if not task_id:
+            return
 
         # =========================
-        # DONE
+        # 🧱 защита от старых сообщений
         # =========================
-        if new_status == "done":
-            state_data = await state.get_data()
-            streak = state_data.get("streak", 0) + 1
+        current_message_id = user_data.get("current_daily_message_id")
+        if current_message_id and callback.message.message_id != current_message_id:
+            return
 
-            coaching_mode = "normal"
-            if streak >= 3:
-                coaching_mode = "momentum"
+        proof_required = current_task.get("proof_required", False)
+        proofs = current_task.get("proofs") or []
+        proof_accepted = any(p.get("status") == "accepted" for p in proofs)
+
+        # =========================
+        # 📎 PROOF
+        # =========================
+        if data == "daily_task_proof":
+
+            if state_data.get("waiting_proof"):
+                return
+
+            # 🔥 сразу блокируем кнопки
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+            await state.update_data(
+                current_daily_task_id=task_id,
+                waiting_proof=True,
+            )
+
+            await callback.message.answer(
+                "Отправь proof по текущей задаче: текст, фото или файл."
+            )
+
+            await state.set_state(GoalFlow.waiting_daily_proof)
+            return
+
+        # =========================
+        # ✅ DONE
+        # =========================
+        if data == "daily_task_done":
+
+            # уже закрыта
+            if current_task.get("status") == "done":
+                return
+
+            # ❗ сначала проверка proof (без блокировки кнопок)
+            if proof_required and not proof_accepted:
+                proof_prompt = current_task.get("proof_prompt") or "Сначала отправь подтверждение выполнения."
+                recommended_proof_type = current_task.get("recommended_proof_type") or "proof"
+
+                await state.update_data(current_daily_task_id=task_id)
+
+                await callback.message.answer(
+                    "❌ Эту задачу нельзя закрыть без подтвержденного proof.\n\n"
+                    f"Что нужно: {recommended_proof_type}\n"
+                    f"{proof_prompt}"
+                )
+
+                await state.set_state(GoalFlow.waiting_daily_proof)
+                return
+
+            # 🔥 ТОЛЬКО ТЕПЕРЬ блокируем кнопки (правильный момент)
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+            # API
+            await set_daily_task_status(task_id, "done")
+
+            fresh_state = await state.get_data()
+            streak = fresh_state.get("streak", 0) + 1
+
+            coaching_mode = "momentum" if streak >= 3 else "normal"
 
             await state.update_data(
                 streak=streak,
@@ -788,20 +836,27 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
                 skip_streak=0,
             )
 
-            await callback.message.answer(
-                f"🔥 Отлично. Серия: {streak} дней подряд."
-            )
+            await callback.message.answer(f"🔥 Отлично. Серия: {streak}.")
 
             await send_next_daily_plan(callback.message, state, source="execution")
             return
 
         # =========================
-        # SKIP
+        # ⏭ SKIP
         # =========================
-        if new_status == "skipped":
-            state_data = await state.get_data()
-            streak = state_data.get("streak", 0)
-            skip_streak = state_data.get("skip_streak", 0) + 1
+        if data == "daily_task_skip":
+
+            # 🔥 сразу блокируем кнопки
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+            await set_daily_task_status(task_id, "skipped")
+
+            fresh_state = await state.get_data()
+            streak = fresh_state.get("streak", 0)
+            skip_streak = fresh_state.get("skip_streak", 0) + 1
 
             await state.update_data(
                 streak=0,
@@ -810,77 +865,136 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
             )
 
             if skip_streak >= 3:
-                await callback.message.answer(
+                text = (
                     "Ты пропускаешь уже несколько задач подряд ❌\n\n"
                     "Это уже не случайность — ты начинаешь выпадать из процесса.\n"
                     "Напиши честно: ты действительно хочешь достичь этой цели?"
                 )
             elif skip_streak == 2:
-                await callback.message.answer(
+                text = (
                     "Второй пропуск подряд.\n\n"
                     "Сейчас критический момент — либо возвращаешься, либо начинаешь откатываться.\n"
                     "Почему пропустил?"
                 )
             elif streak >= 3:
-                await callback.message.answer(
-                    f"Ты прервал серию из {streak} дней ❌\n\n"
+                text = (
+                    f"Ты прервал серию из {streak} ❌\n\n"
                     "Это откат назад.\n"
                     "Напиши, что пошло не так."
                 )
             else:
-                await callback.message.answer(
+                text = (
                     "Ты пропустил задачу.\n\n"
                     "Важно не входить в паттерн пропусков.\n"
                     "Напиши, почему."
                 )
 
+            await callback.message.answer(text)
+
             await state.set_state(GoalFlow.waiting_skip_reason)
             return
 
-    # =========================
-    # PROOF
-    # =========================
-    if data == "daily_task_proof":
-        await state.update_data(current_daily_task_id=task_id)
-
-        await callback.message.answer(
-            "Отправь proof по текущей задаче: текст, фото или файл."
-        )
-
-        await state.set_state(GoalFlow.waiting_daily_proof)
-        return
+    finally:
+        await state.update_data(daily_action_in_progress=False)
 
 @router.message(GoalFlow.waiting_daily_proof)
 async def daily_proof_handler(message: Message, state: FSMContext):
-    data = await state.get_data()
-    current_daily_task_id = data.get("current_daily_task_id")
+    state_data = await state.get_data()
+    task_id = state_data.get("current_daily_task_id")
 
-    if not current_daily_task_id:
-        await message.answer("Не нашел активную задачу для proof. Попробуй открыть текущий день заново.")
-        await state.set_state(GoalFlow.executing_plan)
+    if not task_id:
+        await message.answer("Ошибка: не нашел задачу для proof.")
         return
 
-    if message.photo:
-        proof_type = "photo"
-        proof_label = "📸 Фото получено"
-    elif message.document:
-        proof_type = "file"
-        proof_label = "📎 Файл получен"
-    else:
-        proof_type = "text"
-        proof_label = "📝 Текст получен"
+    # =========================
+    # ⏳ мгновенный feedback
+    # =========================
+    loading_msg = await message.answer("⏳ Проверяю proof...")
 
-    await state.update_data(
-        pending_daily_proof_type=proof_type,
-        current_daily_task_id=None,
-    )
+    try:
+        # =========================
+        # 📦 подготовка данных
+        # =========================
+        file_id = None
+        text = None
 
-    await message.answer(
-        f"{proof_label}\n\nProof принят. Возвращаю тебя к плану на сегодня 👇"
-    )
+        if message.photo:
+            file_id = message.photo[-1].file_id
 
-    await state.set_state(GoalFlow.executing_plan)
-    await send_next_daily_plan(message, state, source="execution")
+        elif message.document:
+            file_id = message.document.file_id
+
+        elif message.text:
+            text = message.text.strip()
+
+        else:
+            await loading_msg.edit_text(
+                "❌ Не удалось распознать proof.\n\n"
+                "Отправь текст, фото или файл."
+            )
+            return
+
+        # =========================
+        # 🚀 отправка в backend
+        # =========================
+        response = await submit_task_proof(
+            task_id=task_id,
+            file_id=file_id,
+            text=text,
+        )
+
+        # =========================
+        # 📊 разбор ответа
+        # =========================
+        proof_status = response.get("status")
+        review_message = (response.get("review_message") or "").strip()
+
+        # =========================
+        # 🎯 реакция
+        # =========================
+        if proof_status == "accepted":
+            await loading_msg.edit_text(
+                "🔥 Принято.\n\n"
+                "Теперь можешь нажать Done."
+            )
+
+        elif proof_status == "rejected":
+            await loading_msg.edit_text(
+                "❌ Proof отклонён.\n\n"
+                f"{review_message or 'Попробуй еще раз и отправь более понятное подтверждение.'}"
+            )
+
+        elif proof_status == "needs_more":
+            await loading_msg.edit_text(
+                "⚠️ Нужно доработать proof.\n\n"
+                f"{review_message or 'Добавь больше деталей или более четкий скрин/описание.'}"
+            )
+
+        else:
+            await loading_msg.edit_text(
+                "⚠️ Не удалось определить результат проверки.\n"
+                "Попробуй отправить proof еще раз."
+            )
+
+        # =========================
+        # 🔄 возврат в execution + обновление
+        # =========================
+        await state.set_state(GoalFlow.executing_plan)
+        await send_next_daily_plan(message, state, source="execution")
+
+    except Exception as e:
+        print("PROOF ERROR:", e)
+
+        await loading_msg.edit_text(
+            "❌ Ошибка при отправке proof.\n"
+            "Попробуй еще раз."
+        )
+
+    finally:
+        # =========================
+        # 🔓 обязательно снимаем блок
+        # =========================
+        await state.update_data(waiting_proof=False)
 
 @router.callback_query(GoalFlow.confirming_plan)
 async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
@@ -903,12 +1017,13 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
         plan = await get_current_plan(goal_id)
 
         await state.update_data(
-            plan=plan,
-            streak=0,
-            last_skip_reason=None,
-            coaching_mode="normal",
-            skip_streak=0,
-        )
+    plan=plan,
+    streak=0,
+    last_skip_reason=None,
+    coaching_mode="normal",
+    skip_streak=0,
+    daily_action_in_progress=False,
+)
 
         await state.set_state(GoalFlow.executing_plan)
         await send_next_daily_plan(callback.message, state, source="accept")

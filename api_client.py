@@ -251,3 +251,11 @@ async def set_daily_plan_status(daily_plan_id: str, status: str):
             json={"status": status}
         )
         return await _handle_response(response)
+    
+async def create_daily_task_proof(task_id: str, payload: dict):
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            f"{BACKEND_BASE_URL}/daily-tasks/{task_id}/proofs",
+            json=payload,
+        )
+        return await _handle_response(response)
