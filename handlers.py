@@ -340,6 +340,23 @@ async def send_next_daily_plan(message_obj, state: FSMContext, source: str = "ge
     print("DEBUG tasks count:", len(tasks))
     print("DEBUG daily_plan keys:", list(daily_plan.keys()))
 
+    print("DEBUG daily_plan proofs_required_count:", daily_plan.get("proofs_required_count"))
+    print("DEBUG daily_plan proofs_accepted_count:", daily_plan.get("proofs_accepted_count"))
+    print("DEBUG daily_plan due_at:", daily_plan.get("due_at"))
+    print("DEBUG daily_plan cycle_status:", daily_plan.get("cycle_status"))
+    print("DEBUG daily_plan cycle:", daily_plan.get("cycle"))
+
+    for i, task in enumerate(tasks, start=1):
+     print(f"DEBUG task #{i} keys:", list(task.keys()))
+     print(f"DEBUG task #{i} title:", task.get("title"))
+     print(f"DEBUG task #{i} proof_required:", task.get("proof_required"))
+     print(f"DEBUG task #{i} proof_status:", task.get("proof_status"))
+     print(f"DEBUG task #{i} recommended_proof_type:", task.get("recommended_proof_type"))
+     print(f"DEBUG task #{i} proof_prompt:", task.get("proof_prompt"))
+     print(f"DEBUG task #{i} status:", task.get("status"))
+     print(f"DEBUG task #{i} bucket:", task.get("bucket"))
+     print(f"DEBUG task #{i} proofs:", task.get("proofs"))
+
     await state.update_data(
         current_daily_plan=daily_plan,
         current_daily_plan_id=daily_plan_id,
