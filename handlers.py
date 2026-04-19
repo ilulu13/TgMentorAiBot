@@ -1008,71 +1008,96 @@ async def daily_proof_handler(message: Message, state: FSMContext):
 @router.callback_query(GoalFlow.confirming_plan)
 async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
     data = callback.data
+    state_data = await state.get_data()
 
-    if data == "accept_plan":
-        await callback.answer()
-
-        user_data = await state.get_data()
-        goal_id = user_data.get("goal_id")
-
-        if not goal_id:
-            await callback.message.answer(
-                "Не нашел активную цель. Начни заново через /start"
-            )
-            return
-
-        await accept_plan(goal_id)
-
-        plan = await get_current_plan(goal_id)
-
-        await state.update_data(
-    plan=plan,
-    streak=0,
-    last_skip_reason=None,
-    coaching_mode="normal",
-    skip_streak=0,
-    daily_action_in_progress=False,
-)
-
-        await state.set_state(GoalFlow.executing_plan)
-        await send_next_daily_plan(callback.message, state, source="accept")
+    # =========================
+    # 🔒 защита от повторных кликов
+    # =========================
+    if state_data.get("plan_action_in_progress"):
         return
 
-    if data == "reject_plan":
-        await callback.answer()
+    await state.update_data(plan_action_in_progress=True)
 
-        await callback.message.answer("Ок, переделаю план...")
+    try:
+        if data == "accept_plan":
+            await callback.answer()
 
-        user_data = await state.get_data()
-        goal_id = user_data.get("goal_id")
+            # 🔥 сразу отключаем старые кнопки
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
 
-        if not goal_id:
-            await callback.message.answer(
-                "Не нашел активную цель. Начни заново через /start"
+            user_data = await state.get_data()
+            goal_id = user_data.get("goal_id")
+
+            if not goal_id:
+                await callback.message.answer(
+                    "Не нашел активную цель. Начни заново через /start"
+                )
+                return
+
+            await accept_plan(goal_id)
+            plan = await get_current_plan(goal_id)
+
+            await state.update_data(
+                plan=plan,
+                streak=0,
+                last_skip_reason=None,
+                coaching_mode="normal",
+                skip_streak=0,
+                daily_action_in_progress=False,
             )
+
+            await state.set_state(GoalFlow.executing_plan)
+            await send_next_daily_plan(callback.message, state, source="accept")
             return
 
-        await generate_plan(goal_id)
+        if data == "reject_plan":
+            await callback.answer()
 
-        plan = await get_current_plan(goal_id)
-        summary = plan.get("summary") or plan.get("summary_text") or "План готов"
-        roadmap = plan.get("roadmap") or plan.get("content", {}).get("roadmap", [])
+            # 🔥 сразу отключаем старые кнопки
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
 
-        roadmap_text = ""
-        if roadmap:
-            roadmap_items = "\n".join([f"• {item}" for item in roadmap])
-            roadmap_text = f"\n\n📋 Общий путь:\n{roadmap_items}"
+            await callback.message.answer("Ок, переделаю план...")
 
-        await callback.message.answer(
-            f"📌 Коротко:\n{summary}"
-            f"{roadmap_text}\n\n"
-            f"👉 Принять этот план?",
-            reply_markup=confirm_plan_keyboard(),
-        )
-        await state.set_state(GoalFlow.confirming_plan)
-        return
+            user_data = await state.get_data()
+            goal_id = user_data.get("goal_id")
 
-    await callback.answer("Неизвестное действие")
+            if not goal_id:
+                await callback.message.answer(
+                    "Не нашел активную цель. Начни заново через /start"
+                )
+                return
+
+            await generate_plan(goal_id)
+
+            plan = await get_current_plan(goal_id)
+            summary = plan.get("summary") or plan.get("summary_text") or "План готов"
+            roadmap = plan.get("roadmap") or plan.get("content", {}).get("roadmap", [])
+
+            roadmap_text = ""
+            if roadmap:
+                roadmap_items = "\n".join([f"• {item}" for item in roadmap])
+                roadmap_text = f"\n\n📋 Общий путь:\n{roadmap_items}"
+
+            await callback.message.answer(
+                f"📌 Коротко:\n{summary}"
+                f"{roadmap_text}\n\n"
+                f"👉 Принять этот план?",
+                reply_markup=confirm_plan_keyboard(),
+            )
+
+            await state.set_state(GoalFlow.confirming_plan)
+            return
+
+        await callback.answer("Неизвестное действие")
+
+    finally:
+        await state.update_data(plan_action_in_progress=False)
 
 @router.message(GoalFlow.waiting_skip_reason)
 async def skip_reason_handler(message: Message, state: FSMContext):
