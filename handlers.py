@@ -946,6 +946,7 @@ async def daily_proof_handler(message: Message, state: FSMContext):
             }
 
         response = await create_daily_task_proof(task_id, payload)
+        print("PROOF RESPONSE:", response)
 
         proof_status = response.get("status")
         review_message = (response.get("review_message") or "").strip()
