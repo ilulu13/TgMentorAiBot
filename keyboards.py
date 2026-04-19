@@ -78,7 +78,6 @@ def coach_style_keyboard():
 def daily_execution_keyboard(tasks: list[dict]) -> InlineKeyboardMarkup:
     current_task = None
 
-    # находим первую активную задачу
     for task in tasks:
         status = task.get("status", "pending")
         if status not in {"done", "skipped", "failed"}:
@@ -86,36 +85,37 @@ def daily_execution_keyboard(tasks: list[dict]) -> InlineKeyboardMarkup:
             break
 
     if not current_task:
-        return InlineKeyboardMarkup(inline_keyboard=[])
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Обновить", callback_data="daily_refresh")]
+            ]
+        )
 
     proof_required = current_task.get("proof_required", False)
     proofs = current_task.get("proofs") or []
-
     proof_accepted = any(p.get("status") == "accepted" for p in proofs)
 
     rows = []
 
-    # =========================
-    # LOGIC
-    # =========================
     if proof_required:
         if proof_accepted:
-            # можно закрыть
             rows.append([
                 InlineKeyboardButton(text="✅ Done", callback_data="daily_task_done"),
                 InlineKeyboardButton(text="⏭ Skip", callback_data="daily_task_skip"),
             ])
         else:
-            # только proof
             rows.append([
                 InlineKeyboardButton(text="📎 Proof", callback_data="daily_task_proof"),
                 InlineKeyboardButton(text="⏭ Skip", callback_data="daily_task_skip"),
             ])
     else:
-        # обычная задача
         rows.append([
             InlineKeyboardButton(text="✅ Done", callback_data="daily_task_done"),
             InlineKeyboardButton(text="⏭ Skip", callback_data="daily_task_skip"),
         ])
+
+    rows.append([
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="daily_refresh")
+    ])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)

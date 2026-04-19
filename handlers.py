@@ -724,7 +724,7 @@ async def profile_option_callback(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(
     GoalFlow.executing_plan,
-    lambda c: c.data in {"daily_task_done", "daily_task_skip", "daily_task_proof"},
+    lambda c: c.data in {"daily_task_done", "daily_task_skip", "daily_task_proof", "daily_refresh"},
 )
 async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -763,6 +763,18 @@ async def daily_execution_callback(callback: CallbackQuery, state: FSMContext):
         proof_required = current_task.get("proof_required", False)
         proofs = current_task.get("proofs") or []
         proof_accepted = any(p.get("status") == "accepted" for p in proofs)
+
+                # =========================
+        # 🔄 REFRESH
+        # =========================
+        if data == "daily_refresh":
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+            await send_next_daily_plan(callback.message, state, source="execution")
+            return
 
         # =========================
         # 📎 PROOF
