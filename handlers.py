@@ -932,13 +932,11 @@ async def daily_proof_handler(message: Message, state: FSMContext):
                 "proof_type": "photo",
                 "telegram_file_id": file_id,
             }
-
         elif message.document:
             payload = {
                 "proof_type": "file",
                 "telegram_file_id": file_id,
             }
-
         elif text:
             payload = {
                 "proof_type": "text",
@@ -953,7 +951,7 @@ async def daily_proof_handler(message: Message, state: FSMContext):
 
         if proof_status == "accepted":
             await loading_msg.edit_text(
-                "🔥 Принято.\n\n"
+                "🔥 Proof принят.\n\n"
                 "Теперь можешь нажать Done."
             )
 
@@ -969,10 +967,16 @@ async def daily_proof_handler(message: Message, state: FSMContext):
                 f"{review_message or 'Добавь больше деталей или более четкий скрин/описание.'}"
             )
 
+        elif proof_status == "uploaded":
+            await loading_msg.edit_text(
+                "⏳ Proof загружен и отправлен на проверку.\n\n"
+                "Статус обновится в задаче после завершения проверки."
+            )
+
         else:
             await loading_msg.edit_text(
-                "⚠️ Не удалось определить результат проверки.\n"
-                "Попробуй отправить proof еще раз."
+                f"⚠️ Неожиданный статус proof: {proof_status}\n"
+                "Проверь задачу еще раз через несколько секунд."
             )
 
         await state.set_state(GoalFlow.executing_plan)
