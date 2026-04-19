@@ -920,13 +920,10 @@ async def daily_proof_handler(message: Message, state: FSMContext):
 
         if message.photo:
             file_id = message.photo[-1].file_id
-
         elif message.document:
             file_id = message.document.file_id
-
         elif message.text:
             text = message.text.strip()
-
         else:
             await loading_msg.edit_text(
                 "❌ Не удалось распознать proof.\n\n"
@@ -935,13 +932,17 @@ async def daily_proof_handler(message: Message, state: FSMContext):
             return
 
         # =========================
-        # 🚀 отправка в backend
+        # 🚀 собираем payload и отправляем в backend
         # =========================
-        response = await submit_task_proof(
-            task_id=task_id,
-            file_id=file_id,
-            text=text,
-        )
+        payload = {}
+
+        if file_id:
+            payload["telegram_file_id"] = file_id
+
+        if text:
+            payload["text"] = text
+
+        response = await create_daily_task_proof(task_id, payload)
 
         # =========================
         # 📊 разбор ответа
