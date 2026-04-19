@@ -906,15 +906,9 @@ async def daily_proof_handler(message: Message, state: FSMContext):
         await message.answer("Ошибка: не нашел задачу для proof.")
         return
 
-    # =========================
-    # ⏳ мгновенный feedback
-    # =========================
     loading_msg = await message.answer("⏳ Проверяю proof...")
 
     try:
-        # =========================
-        # 📦 подготовка данных
-        # =========================
         file_id = None
         text = None
 
@@ -931,28 +925,31 @@ async def daily_proof_handler(message: Message, state: FSMContext):
             )
             return
 
-        # =========================
-        # 🚀 собираем payload и отправляем в backend
-        # =========================
         payload = {}
 
-        if file_id:
-            payload["telegram_file_id"] = file_id
+        if message.photo:
+            payload = {
+                "proof_type": "photo",
+                "telegram_file_id": file_id,
+            }
 
-        if text:
-            payload["text"] = text
+        elif message.document:
+            payload = {
+                "proof_type": "file",
+                "telegram_file_id": file_id,
+            }
+
+        elif text:
+            payload = {
+                "proof_type": "text",
+                "text": text,
+            }
 
         response = await create_daily_task_proof(task_id, payload)
 
-        # =========================
-        # 📊 разбор ответа
-        # =========================
         proof_status = response.get("status")
         review_message = (response.get("review_message") or "").strip()
 
-        # =========================
-        # 🎯 реакция
-        # =========================
         if proof_status == "accepted":
             await loading_msg.edit_text(
                 "🔥 Принято.\n\n"
@@ -977,9 +974,6 @@ async def daily_proof_handler(message: Message, state: FSMContext):
                 "Попробуй отправить proof еще раз."
             )
 
-        # =========================
-        # 🔄 возврат в execution + обновление
-        # =========================
         await state.set_state(GoalFlow.executing_plan)
         await send_next_daily_plan(message, state, source="execution")
 
@@ -992,9 +986,6 @@ async def daily_proof_handler(message: Message, state: FSMContext):
         )
 
     finally:
-        # =========================
-        # 🔓 обязательно снимаем блок
-        # =========================
         await state.update_data(waiting_proof=False)
 
 @router.callback_query(GoalFlow.confirming_plan)
