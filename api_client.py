@@ -216,6 +216,9 @@ async def get_today_daily_plan(goal_id: str):
     
 async def get_next_daily_plan(goal_id: str):
     try:
+        print("DEBUG BACKEND_BASE_URL:", BACKEND_BASE_URL)
+        print("DEBUG NEXT URL:", f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/next")
+
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.get(
                 f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/next"
