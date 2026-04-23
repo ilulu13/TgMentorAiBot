@@ -25,6 +25,9 @@ from api_client import (
     create_daily_task_proof,
 )
 
+import logging
+logger = logging.getLogger(__name__)
+
 router = Router()
 
 def render_profiling_question_text(result: dict) -> str:
@@ -1010,10 +1013,8 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
     data = callback.data
     state_data = await state.get_data()
 
-    # =========================
-    # 🔒 защита от повторных кликов
-    # =========================
     if state_data.get("plan_action_in_progress"):
+        await callback.answer()
         return
 
     await state.update_data(plan_action_in_progress=True)
@@ -1022,7 +1023,6 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
         if data == "accept_plan":
             await callback.answer()
 
-            # 🔥 сразу отключаем старые кнопки
             try:
                 await callback.message.edit_reply_markup(reply_markup=None)
             except Exception:
@@ -1037,8 +1037,20 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
                 )
                 return
 
-            await accept_plan(goal_id)
-            plan = await get_current_plan(goal_id)
+            try:
+                await accept_plan(goal_id)
+            except Exception as e:
+                logger.error(f"[accept_plan] goal_id={goal_id} error={e}")
+                await callback.message.answer(
+                    "❌ Не удалось принять план. Попробуй ещё раз."
+                )
+                return
+
+            try:
+                plan = await get_current_plan(goal_id)
+            except Exception as e:
+                logger.error(f"[get_current_plan after accept] goal_id={goal_id} error={e}")
+                plan = {}
 
             await state.update_data(
                 plan=plan,
@@ -1050,19 +1062,23 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
             )
 
             await state.set_state(GoalFlow.executing_plan)
-            await send_next_daily_plan(callback.message, state, source="accept")
+
+            try:
+                await send_next_daily_plan(callback.message, state, source="accept")
+            except Exception as e:
+                logger.error(f"[send_next_daily_plan after accept] goal_id={goal_id} error={e}")
+                await callback.message.answer(
+                    "✅ План принят! Задачи появятся когда будут готовы."
+                )
             return
 
         if data == "reject_plan":
             await callback.answer()
 
-            # 🔥 сразу отключаем старые кнопки
             try:
                 await callback.message.edit_reply_markup(reply_markup=None)
             except Exception:
                 pass
-
-            await callback.message.answer("Ок, переделаю план...")
 
             user_data = await state.get_data()
             goal_id = user_data.get("goal_id")
@@ -1073,9 +1089,18 @@ async def confirm_plan_callback(callback: CallbackQuery, state: FSMContext):
                 )
                 return
 
-            await generate_plan(goal_id)
+            await callback.message.answer("Ок, переделаю план...")
 
-            plan = await get_current_plan(goal_id)
+            try:
+                await generate_plan(goal_id)
+                plan = await get_current_plan(goal_id)
+            except Exception as e:
+                logger.error(f"[reject_plan / generate_plan] goal_id={goal_id} error={e}")
+                await callback.message.answer(
+                    "❌ Не удалось перегенерировать план. Попробуй ещё раз."
+                )
+                return
+
             summary = plan.get("summary") or plan.get("summary_text") or "План готов"
             roadmap = plan.get("roadmap") or plan.get("content", {}).get("roadmap", [])
 

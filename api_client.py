@@ -12,6 +12,7 @@ async def _handle_response(response: httpx.Response):
         response.raise_for_status()
     except httpx.HTTPStatusError as e:
         text = e.response.text
+        print(f"[API ERROR] {e.response.status_code} | URL: {e.response.url} | Body: {text}")
         raise BackendAPIError(
             f"Backend returned {e.response.status_code}: {text}"
         ) from e
@@ -19,6 +20,7 @@ async def _handle_response(response: httpx.Response):
     try:
         return response.json()
     except ValueError as e:
+        print(f"[API ERROR] Invalid JSON | URL: {response.url} | Body: {response.text}")
         raise BackendAPIError(
             f"Backend returned invalid JSON: {response.text}"
         ) from e
