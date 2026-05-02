@@ -26,6 +26,10 @@ async def _handle_response(response: httpx.Response):
         ) from e
 
 
+# =========================
+# USERS
+# =========================
+
 async def get_or_create_user(payload: dict):
     async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
@@ -34,6 +38,10 @@ async def get_or_create_user(payload: dict):
         )
         return await _handle_response(response)
 
+
+# =========================
+# GOALS
+# =========================
 
 async def create_goal(payload: dict):
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -60,6 +68,10 @@ async def set_active_goal(payload: dict):
         )
         return await _handle_response(response)
 
+
+# =========================
+# PROFILING
+# =========================
 
 async def start_profiling(goal_id: str):
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -92,15 +104,17 @@ async def get_profiling_state(goal_id: str):
             f"{BACKEND_BASE_URL}/goals/{goal_id}/profiling/state",
         )
         return await _handle_response(response)
-    
-    
-async def generate_plan(goal_id: str):
-    timeout = httpx.Timeout(60.0)
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+
+# =========================
+# PLAN
+# =========================
+
+async def generate_plan(goal_id: str):
+    async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
             f"{BACKEND_BASE_URL}/goals/{goal_id}/plan/generate",
-            json={"regenerate": False}
+            json={"regenerate": False},
         )
         return await _handle_response(response)
 
@@ -108,7 +122,7 @@ async def generate_plan(goal_id: str):
 async def get_current_plan(goal_id: str):
     async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.get(
-            f"{BACKEND_BASE_URL}/goals/{goal_id}/plan/current"
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/plan/current",
         )
         return await _handle_response(response)
 
@@ -116,135 +130,75 @@ async def get_current_plan(goal_id: str):
 async def accept_plan(goal_id: str):
     async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
-            f"{BACKEND_BASE_URL}/goals/{goal_id}/plan/accept"
-        )
-        return await _handle_response(response)
-    
-    
-async def start_checkin(goal_id: str):
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            f"{BACKEND_BASE_URL}/goals/{goal_id}/checkins/today"
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/plan/accept",
         )
         return await _handle_response(response)
 
 
-async def send_checkin_text(goal_id: str, text: str):
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            f"{BACKEND_BASE_URL}/goals/{goal_id}/checkins/today/text",
-            json={"text": text}
-        )
-        return await _handle_response(response)
+# =========================
+# DAILY PLANS
+# =========================
 
-
-async def mark_step(goal_id: str, step_id: str, status: str):
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            f"{BACKEND_BASE_URL}/goals/{goal_id}/checkins/today/step",
-            json={
-                "step_id": step_id,
-                "status": status
-            }
-        )
-        return await _handle_response(response)
-    
-async def create_today_checkin(goal_id: str):
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            f"{BACKEND_BASE_URL}/goals/{goal_id}/checkins/today"
-        )
-        return await _handle_response(response)
-
-
-async def get_today_checkin(goal_id: str):
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.get(
-            f"{BACKEND_BASE_URL}/goals/{goal_id}/checkins/today"
-        )
-        return await _handle_response(response)
-
-
-async def submit_checkin_report(checkin_id: str, text: str):
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            f"{BACKEND_BASE_URL}/checkins/{checkin_id}/report",
-            json={"report_text": text}
-        )
-        return await _handle_response(response)
-
-
-async def set_step_status(checkin_id: str, step_id: str, status: str):
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            f"{BACKEND_BASE_URL}/checkins/{checkin_id}/steps/{step_id}/status",
-            json={"status": status}
-        )
-        return await _handle_response(response)
-
-
-async def complete_checkin(checkin_id: str):
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            f"{BACKEND_BASE_URL}/checkins/{checkin_id}/complete"
-        )
-        return await _handle_response(response)
-    
-async def create_step_proof(checkin_id: str, step_id: str, payload: dict):
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            f"{BACKEND_BASE_URL}/checkins/{checkin_id}/steps/{step_id}/proofs",
-            json=payload
-        )
-        return await _handle_response(response)
-    
-async def get_daily_plans(goal_id: str):
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.get(
-            f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans"
-        )
-        return await _handle_response(response)
-
-
-async def get_today_daily_plan(goal_id: str):
+async def get_next_daily_plan(goal_id: str):
+    """
+    Возвращает следующий actionable daily plan.
+    Ответ: { "date": ..., "daily_plan": DailyPlanResponse | null }
+    Возвращает {"error": "timeout"} при таймауте.
+    """
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.get(
-                f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/today"
+                f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/next",
             )
             return await _handle_response(response)
     except httpx.ReadTimeout:
         return {"error": "timeout"}
-    
-async def get_next_daily_plan(goal_id: str):
-    try:
-        print("DEBUG BACKEND_BASE_URL:", BACKEND_BASE_URL)
-        print("DEBUG NEXT URL:", f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/next")
 
+
+async def get_today_daily_plan(goal_id: str):
+    """
+    Возвращает daily plan на сегодня.
+    Ответ: { "date": ..., "daily_plan": DailyPlanResponse | null }
+    """
+    try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.get(
-                f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/next"
+                f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/today",
             )
-            data = await _handle_response(response)
-            print("DEBUG /daily-plans/next RESPONSE:", data)
-            return data
+            return await _handle_response(response)
     except httpx.ReadTimeout:
-        print("DEBUG /daily-plans/next TIMEOUT")
         return {"error": "timeout"}
+
 
 async def get_daily_plan_by_day(goal_id: str, day_number: int):
     async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.get(
-            f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/{day_number}"
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans/{day_number}",
         )
         return await _handle_response(response)
 
 
+async def get_daily_plans(goal_id: str):
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(
+            f"{BACKEND_BASE_URL}/goals/{goal_id}/daily-plans",
+        )
+        return await _handle_response(response)
+
+
+# =========================
+# DAILY TASKS
+# =========================
+
 async def set_daily_task_status(task_id: str, status: str):
+    """
+    Обновляет статус задачи.
+    Возвращает обновлённый DailyPlanResponse (со всеми tasks внутри).
+    """
     async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
             f"{BACKEND_BASE_URL}/daily-tasks/{task_id}/status",
-            json={"status": status}
+            json={"status": status},
         )
         return await _handle_response(response)
 
@@ -253,14 +207,32 @@ async def set_daily_plan_status(daily_plan_id: str, status: str):
     async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
             f"{BACKEND_BASE_URL}/daily-plans/{daily_plan_id}/status",
-            json={"status": status}
+            json={"status": status},
         )
         return await _handle_response(response)
-    
+
+
+# =========================
+# PROOFS
+# =========================
+
 async def create_daily_task_proof(task_id: str, payload: dict):
+    """
+    Создаёт proof для задачи.
+    payload: { proof_type, telegram_file_id?, text? }
+    Возвращает ProofResponse: { proof_id, status, review_message, ... }
+    """
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
             f"{BACKEND_BASE_URL}/daily-tasks/{task_id}/proofs",
             json=payload,
+        )
+        return await _handle_response(response)
+
+
+async def get_task_proofs(task_id: str):
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(
+            f"{BACKEND_BASE_URL}/daily-tasks/{task_id}/proofs",
         )
         return await _handle_response(response)
